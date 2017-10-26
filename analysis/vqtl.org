@@ -1,0 +1,115 @@
+#+TITLE: vqtl
+#+DATE: <2017-10-25 Wed>
+#+AUTHOR: Abhishek Sarkar
+#+EMAIL: aksarkar@uchicago.edu
+#+OPTIONS: ':nil *:t -:t ::t <:t H:3 \n:nil ^:t arch:headline author:t
+#+OPTIONS: broken-links:nil c:nil creator:nil d:(not "LOGBOOK") date:t e:t
+#+OPTIONS: email:nil f:t inline:t num:t p:nil pri:nil prop:nil stat:t tags:t
+#+OPTIONS: tasks:t tex:t timestamp:t title:t toc:t todo:t |:t
+#+LANGUAGE: en
+#+SELECT_TAGS: export
+#+EXCLUDE_TAGS: noexport
+#+CREATOR: Emacs 25.1.1 (Org mode 9.1.2)
+#+PROPERTY: header-args:ipython+ :session kernel-aksarkar.json :results raw drawer :async t
+
+* Setup
+
+  #+NAME: ipython3-kernel
+  #+BEGIN_SRC shell :dir (concat (file-name-as-directory (getenv "SCRATCH")) "singlecell") :var RESOURCES="--mem=8G --partition=broadwl"
+    sbatch $RESOURCES --job-name=ipython3 --output=ipython3.out
+    #!/bin/bash
+    source activate scqtl
+    rm -f $HOME/.local/share/jupyter/runtime/kernel-aksarkar.json
+    ipython3 kernel --ip=$(hostname -i) -f kernel-aksarkar.json
+  #+END_SRC
+
+  #+RESULTS: ipython3-kernel
+  : Submitted batch job 39242391
+
+  #+NAME: imports
+  #+BEGIN_SRC ipython
+    %matplotlib inline
+
+    import collections
+    import pandas as pd
+    import rpy2.robjects
+    import rpy2.robjects.packages
+    import rpy2.robjects.pandas2ri
+
+    r = rpy2.robjects.r
+    importr = rpy2.robjects.packages.importr
+
+    biobase = importr('Biobase')
+  #+END_SRC
+
+  #+RESULTS: imports
+  :RESULTS:
+  :END:
+
+* Read the data
+
+  #+BEGIN_SRC ipython
+    ExpressionSet = collections.namedtuple('ExpressionSet', ['features', 'phenotypes', 'data'])
+
+    def load_eset(filename):
+      eset = r['readRDS'](filename)
+      fdata = pandas2ri.ri2py(biobase.fData(eset))
+      pdata = pandas2ri.ri2py(biobase.pData(eset))
+      expr_matrix = pd.DataFrame(data=pandas2ri.ri2py(biobase.exprs(eset)), 
+                                 index=fdata.index,
+                                 columns=pdata.index)
+      return ExpressionSet(fdata, pdata, expr_matrix)
+
+    eset = load_eset('/home/aksarkar/projects/singlecell-qtl/data/eset/03162017.rds')
+    eset.data.head()
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  #+BEGIN_EXAMPLE
+                   03162017-A01  03162017-A02  03162017-A03  03162017-A04  \
+    ENSG00000000003             0             3             2             1   
+    ENSG00000000005             0             0             0             0   
+    ENSG00000000419             0             3             0             2   
+    ENSG00000000457             1             0             0             0   
+    ENSG00000000460             0             2             0             0   
+
+                     03162017-A05  03162017-A06  03162017-A07  03162017-A08  \
+    ENSG00000000003             1             9             4             3   
+    ENSG00000000005             0             0             0             0   
+    ENSG00000000419             1             2             0             2   
+    ENSG00000000457             2             1             0             0   
+    ENSG00000000460             0             0             4             2   
+
+                     03162017-A09  03162017-A10      ...       03162017-H03  \
+    ENSG00000000003             9             4      ...                  5   
+    ENSG00000000005             0             0      ...                  0   
+    ENSG00000000419             7             3      ...                  0   
+    ENSG00000000457             0             0      ...                  1   
+    ENSG00000000460             0             1      ...                  0   
+
+                     03162017-H04  03162017-H05  03162017-H06  03162017-H07  \
+    ENSG00000000003             3             2             0             0   
+    ENSG00000000005             0             0             0             0   
+    ENSG00000000419             0             0             0             0   
+    ENSG00000000457             0             0             0             0   
+    ENSG00000000460             1             0             0             0   
+
+                     03162017-H08  03162017-H09  03162017-H10  03162017-H11  \
+    ENSG00000000003             4             0             2             5   
+    ENSG00000000005             1             0             0             0   
+    ENSG00000000419             2             0             2             3   
+    ENSG00000000457             0             0             1             0   
+    ENSG00000000460             1             0             0             0   
+
+                     03162017-H12  
+    ENSG00000000003             0  
+    ENSG00000000005             0  
+    ENSG00000000419             0  
+    ENSG00000000457             0  
+    ENSG00000000460             0  
+
+    [5 rows x 96 columns]
+  #+END_EXAMPLE
+  :END:
+
