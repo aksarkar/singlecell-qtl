@@ -1,4 +1,4 @@
-#+TITLE: vqtl
+#+TITLE: QTL mapping
 #+DATE: <2017-10-25 Wed>
 #+AUTHOR: Abhishek Sarkar
 #+EMAIL: aksarkar@uchicago.edu
@@ -24,22 +24,21 @@
   #+END_SRC
 
   #+RESULTS: ipython3-kernel
-  : Submitted batch job 39242391
+  : Submitted batch job 39373854
 
   #+NAME: imports
   #+BEGIN_SRC ipython
     %matplotlib inline
 
     import collections
+    import glob
+    import os
     import pandas as pd
     import rpy2.robjects
     import rpy2.robjects.packages
-    import rpy2.robjects.pandas2ri
+    import rpy2.robjects.pandas2ri as pandas2ri
 
-    r = rpy2.robjects.r
-    importr = rpy2.robjects.packages.importr
-
-    biobase = importr('Biobase')
+    biobase = rpy2.robjects.packages.importr('Biobase')
   #+END_SRC
 
   #+RESULTS: imports
@@ -60,56 +59,118 @@
                                  columns=pdata.index)
       return ExpressionSet(fdata, pdata, expr_matrix)
 
-    eset = load_eset('/home/aksarkar/projects/singlecell-qtl/data/eset/03162017.rds')
-    eset.data.head()
+    def load_project(dirname):
+      files = glob.glob(os.path.join(dirname, 'data', 'eset', '*.rds'))
+      return [load_eset(f) for f in files]
+
+    esets = load_project(os.path.join(os.getenv('HOME'), 'projects', 'singlecell-qtl'))
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  #+BEGIN_EXAMPLE
-                   03162017-A01  03162017-A02  03162017-A03  03162017-A04  \
-    ENSG00000000003             0             3             2             1   
-    ENSG00000000005             0             0             0             0   
-    ENSG00000000419             0             3             0             2   
-    ENSG00000000457             1             0             0             0   
-    ENSG00000000460             0             2             0             0   
-
-                     03162017-A05  03162017-A06  03162017-A07  03162017-A08  \
-    ENSG00000000003             1             9             4             3   
-    ENSG00000000005             0             0             0             0   
-    ENSG00000000419             1             2             0             2   
-    ENSG00000000457             2             1             0             0   
-    ENSG00000000460             0             0             4             2   
-
-                     03162017-A09  03162017-A10      ...       03162017-H03  \
-    ENSG00000000003             9             4      ...                  5   
-    ENSG00000000005             0             0      ...                  0   
-    ENSG00000000419             7             3      ...                  0   
-    ENSG00000000457             0             0      ...                  1   
-    ENSG00000000460             0             1      ...                  0   
-
-                     03162017-H04  03162017-H05  03162017-H06  03162017-H07  \
-    ENSG00000000003             3             2             0             0   
-    ENSG00000000005             0             0             0             0   
-    ENSG00000000419             0             0             0             0   
-    ENSG00000000457             0             0             0             0   
-    ENSG00000000460             1             0             0             0   
-
-                     03162017-H08  03162017-H09  03162017-H10  03162017-H11  \
-    ENSG00000000003             4             0             2             5   
-    ENSG00000000005             1             0             0             0   
-    ENSG00000000419             2             0             2             3   
-    ENSG00000000457             0             0             1             0   
-    ENSG00000000460             1             0             0             0   
-
-                     03162017-H12  
-    ENSG00000000003             0  
-    ENSG00000000005             0  
-    ENSG00000000419             0  
-    ENSG00000000457             0  
-    ENSG00000000460             0  
-
-    [5 rows x 96 columns]
-  #+END_EXAMPLE
   :END:
 
+* Build the model
+
+  #+BEGIN_SRC ipython
+    def zinb(x, mean, prec, pi_0):
+      """Return log likelihood of x under ZINB model
+
+      x ~ pi_0 \delta_0(x) + (1 - pi_0) NB(mean, prec^-1)
+
+      """
+      eps = 1e-8
+      case_zero = (tf.nn.softplus(-pi_0 + prec * tf.log(prec + eps) - prec * tf.log(prec + mean + eps)) -
+                   tf.nn.softplus(-pi_0))
+      case_non_zero = (-pi_0 - tf.nn.softplus(-pi_0) + prec * tf.log(prec + eps) -
+                       prec * tf.log(prec + mean + eps) + x * tf.log(mean + eps) -
+                       x * tf.log(prec + mean + eps) + tf.lgamma(x + prec) -
+                       tf.lgamma(prec) - tf.lgamma(x + 1))
+      mask = tf.cast(tf.less(x, eps), tf.float32)
+      res = tf.multiply(mask, case_zero) + tf.multiply(1 - mask, case_non_zero)
+      return tf.reduce_sum(res, axis=-1)
+
+    def kl_normal_normal(mean_a, prec_a, mean_b, prec_b):
+      """Rasmussen & Williams Eq. A23"""
+      return tf.reduce_sum(.5 * (1 - tf.log(prec_b) + tf.log(prec_a) + prec_b * (T.sqr(mean_a - mean_b) + 1 / prec_a)), axis=-1)
+
+    def kl_bernoulli_bernoulli(p_a, p_b):
+      """Rasmussen & Williams Eq. A22"""
+      return tf.sum(p_a * tf.log(p_a / p_b) + (1 - p_a) * tf.log((1 - p_a) / (1 - p_b)))
+
+    def model(n, p, k):
+      """Build the model
+
+      Y_ik ~ ZINB(\sum_j X_ij \theta_j, \sum_j X_ij \phi_j, \pi_k)
+      \theta_j ~ SSB(\pi_\theta, \tau_\theta^-1)
+      \phi_j ~ SSB(\pi_\phi, \tau_\phi^-1)
+      logit(\pi_k) ~ N(-\log(p), 1)
+  
+      Y - digital gene expression
+      X - genotype (centered)
+      \theta - mean effect
+      \phi - inverse variance effect
+      \pi - dropout
+      \pi_{\theta,\phi} - sparsity
+      \tau_{\theta,\phi} - effect size precision
+      i - individual
+      j - covariate (SNP/confounder)
+      k - gene
+
+      """
+      x_ph = tf.placeholder(tf.float32)
+      y_ph = tf.placeholder(tf.float32)
+
+      with tf.variable_scope('q', initializer=tf.zeros_initializer):
+        with tf.variable_scope('spikeslab'):
+          q_logodds_mean = tf.get_variable('logodds_mean', initializer=tf.constant([-10.]))
+          q_logodds_log_prec = tf.get_variable('logodds_log_prec', shape=[1])
+          q_logodds_prec = 1e-6 + tf.nn.softplus(q_logodds_log_prec)
+          # In [685]: np.log(np.finfo('float32').resolution)
+          # Out[693]: -13.815511
+          pi = tf.nn.sigmoid(tf.clip_by_value(q_logodds_mean, -13, 13))
+
+          q_scale_mean = tf.get_variable('q_scale_mean', shape=[1])
+          q_scale_log_prec = tf.get_variable('q_scale_log_prec', shape=[1])
+          q_scale_prec = 1e-6 + tf.nn.softplus(q_scale_log_prec)
+          tau = tf.nn.softplus(q_scale_mean)
+
+          q_logit_z = tf.get_variable('q_logit_z', shape=[p, 1])
+          q_z = tf.nn.sigmoid(tf.clip_by_value(q_logit_z, -13, 13))
+
+          q_theta_mean = tf.get_variable('q_theta_mean', shape=[p, 1])
+          q_theta_log_prec = tf.get_variable('q_theta_log_prec', shape=[p, 1])
+          q_theta_prec = 1e-6 + tf.nn.softplus(q_theta_log_prec)
+
+      theta_posterior_mean = q_z * q_theta_mean
+      theta_posterior_var = q_z / q_theta_prec + q_z * (1 - q_z) * tf.square(q_theta_mean)
+      eta_mean = tf.matmul(x_ph, theta_posterior_mean)
+      eta_std = tf.sqrt(tf.matmul(tf.square(x_ph), theta_posterior_var))
+
+      noise = tf.random_normal([50, 2])
+      eta = eta_mean + noise[:,0] * eta_std
+      phi = tf.nn.softplus(q_log_prec_mean + noise[:,1] * q_log_prec_std)
+
+      llik = -.5 * tf.reduce_mean(tf.reduce_sum(-tf.log(phi) + tf.square(y_ph - eta) * phi, axis=0))
+      kl_z = tf.reduce_sum(q_z * tf.log(q_z / pi) + (1 - q_z) * tf.log((1 - q_z) / (1 - pi)))
+      kl_theta = tf.reduce_sum(q_z * .5 * (1 - tf.log(tau) + tf.log(q_theta_prec) + tau * (tf.square(q_theta_mean) + 1 / q_theta_prec)))
+      kl_logodds = .5 * tf.reduce_sum(1 + tf.log(q_logodds_prec) + (tf.square(q_logodds_mean) + 1 / q_logodds_prec))
+      kl_scale = .5 * tf.reduce_sum(1 + tf.log(q_scale_prec) + (tf.square(q_scale_mean) + 1 / q_scale_prec))
+      kl_log_prec = .5 * tf.reduce_sum(1 + tf.log(q_log_prec_prec) + (tf.square(q_log_prec_mean) + 1 / q_log_prec_prec))
+      elbo = llik - kl_z - kl_theta - kl_logodds - kl_scale - kl_log_prec
+
+      optimizer = tf.train.RMSPropOptimizer(learning_rate=1e-2)
+      train = optimizer.minimize(-elbo)
+
+      # GLM coefficient of determination
+      R = 1 - tf.reduce_sum(tf.square(y_ph - eta_mean)) / tf.reduce_sum(tf.square(y_ph - tf.reduce_mean(y_ph)))
+
+      opt = [
+        q_z,
+        theta_posterior_mean,
+        pi,
+        tau,
+      ]
+
+      return train, elbo, opt
+  #+END_SRC
