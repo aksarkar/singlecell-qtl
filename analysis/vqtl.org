@@ -73,22 +73,28 @@
 * Build the model
 
   #+BEGIN_SRC ipython
-    def zinb(x, mean, prec, pi_0):
-      """Return log likelihood of x under ZINB model
+    def poisson_gamma_llik(x, mean, dispersion):
+      """Return log likelihood of x under Poisson-Gamma model
 
-      x ~ pi_0 \delta_0(x) + (1 - pi_0) NB(mean, prec^-1)
+      \int_rate Poisson(x; rate) Gamma(rate; mean, dispersion) drate
 
       """
-      eps = 1e-8
-      case_zero = (tf.nn.softplus(-pi_0 + prec * tf.log(prec + eps) - prec * tf.log(prec + mean + eps)) -
-                   tf.nn.softplus(-pi_0))
-      case_non_zero = (-pi_0 - tf.nn.softplus(-pi_0) + prec * tf.log(prec + eps) -
-                       prec * tf.log(prec + mean + eps) + x * tf.log(mean + eps) -
-                       x * tf.log(prec + mean + eps) + tf.lgamma(x + prec) -
-                       tf.lgamma(prec) - tf.lgamma(x + 1))
-      mask = tf.cast(tf.less(x, eps), tf.float32)
-      res = tf.multiply(mask, case_zero) + tf.multiply(1 - mask, case_non_zero)
-      return tf.reduce_sum(res, axis=-1)
+      return (mean * tf.log(dispersion) +
+              tf.lgamma(x + mean) -
+              tf.lgamma(mean) - 
+              tf.lgamma(x + 1) -
+              mean * tf.log(1 + dispersion))
+
+    def zinb_llik(x, dropout, mean, dispersion):
+      """Return log likelihood of x under ZINB model
+
+      x ~ dropout \delta_0(x) + (1 - dropout) PoissonGamma(x; mean, dispersion)
+
+      """
+      zeros = tf.cast(x == 0, tf.float32)
+      zeros * tf.log(dropout + (1 - dropout) * poisson_gamma_llik(x, mean, dispersion))
+      dropout * poisson_gamma_llik(x, mean, dispersion)
+      return (tf.reduce_logsumexp() (1 - zeros) * poisson_gamma_llik(x, mean, dispersion))
 
     def kl_normal_normal(mean_a, prec_a, mean_b, prec_b):
       """Rasmussen & Williams Eq. A23"""
@@ -105,7 +111,7 @@
       \theta_j ~ SSB(\pi_\theta, \tau_\theta^-1)
       \phi_j ~ SSB(\pi_\phi, \tau_\phi^-1)
       logit(\pi_k) ~ N(-\log(p), 1)
-  
+
       Y - digital gene expression
       X - genotype (centered)
       \theta - mean effect
