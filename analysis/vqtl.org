@@ -129,10 +129,10 @@
                    biased_softplus(tf.get_variable('prec', [p, n]))]
         with tf.name_scope('mean'):
           mean = [tf.get_variable('mean', [p, n]),
-                  biased_softplus(tf.get_variable('prec'), [p, np])]
+                  biased_softplus(tf.get_variable('prec'), [p, n])]
         with tf.name_scope('dispersion'):
-          dispersion = [tf.get_variable('mean_mean', [p, n]),
-                        biased_softplus(tf.get_variable('dispersion_prec', [p, n]))]
+          dispersion = [tf.get_variable('mean', [p, n]),
+                        biased_softplus(tf.get_variable('prec', [p, n]))]
 
         params = [dropout, mean, dispersion]
         kl_terms = [tf.reduce_sum(kl_normal_normal(mean_, prec_, tf.constant(0.), tf.constant(1.)))
