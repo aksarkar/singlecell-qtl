@@ -47,8 +47,9 @@
 
   #+BEGIN_SRC ipython
     def load_data(proj_dir):
-      counts = pd.read_table(os.path.join(proj_dir), 'data', 'scqtl-counts.txt.gz')
-      annotations = pd.read_table(os.path.join(proj_dir), 'data', 'scqtl-annotation.txt')
+      counts = pd.read_table(os.path.join(proj_dir, 'data', 'scqtl-counts.txt.gz'), index_col=0)
+      annotations = pd.read_table(os.path.join(proj_dir, 'data', 'scqtl-annotation.txt'))
+      return counts, annotations
 
     counts, annotations = load_data(os.path.join(os.getenv('HOME'), 'projects', 'singlecell-qtl'))
   #+END_SRC
