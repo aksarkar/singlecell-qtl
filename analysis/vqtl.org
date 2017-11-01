@@ -61,6 +61,9 @@
     def biased_softplus(x, bias=1e-6):
       return bias + tf.nn.softplus(x)
 
+    def logit(x):
+      return tf.reciprocal(1 + tf.exp(-x))
+
     def sigmoid(x):
       """Sigmoid clipped to float32 resolution
 
@@ -100,37 +103,50 @@
     def sample_gaussian(mean, prec, stoch_samples=1):
       return mean + tf.random_normal([stoch_samples, 1]) * tf.sqrt(tf.reciprocal(prec))
 
-    def model0(counts, stoch_samples=10, learning_rate=1e-3):
-      """Return approximate posterior mean of mean parameter and dispersion parameter
+    def model0(counts, annotations, stoch_samples=10, learning_rate=1e-3):
+      """Return approximate posterior means of dropout, mean, dispersion
 
-      y ~ \pi \delta_0 + (1 - \pi) PoissonGamma(\mu, \phi)
+      counts ~ ZINB(dropout, mean, dispersion)
+
+      p genes, n cells, m individuals
+
+      counts (p x n) is digital gene expression
+      dropout (1 x n) is pooled across genes and individuals
+      mean (p x m) is pooled across individuals
+      dispersion (p x m) is pooled across individuals
 
       """
       p, n = dge.shape
-      with tf.Graph().as_default(), tf.Session() as sess, tf.variable_scope('q', initializer=tf.random_normal_initializer):
-        counts = tf.placeholder(tf.float32)
+      m = len(annotations['chip_id'].unique())
 
-        with tf.name_scope('dropout'):
-          dropout = [tf.get_variable('mean', [p, n]),
-                   biased_softplus(tf.get_variable('prec', [p, n]))]
-        with tf.name_scope('mean'):
-          mean = [tf.get_variable('mean', [p, n]),
-                  biased_softplus(tf.get_variable('prec'), [p, n])]
-        with tf.name_scope('dispersion'):
-          dispersion = [tf.get_variable('mean', [p, n]),
-                        biased_softplus(tf.get_variable('prec', [p, n]))]
+      with tf.Graph().as_default(), tf.Session() as sess:
+        y = tf.placeholder(tf.float32)
+
+        with tf.variable_scope('q', initializer=tf.random_normal_initializer):
+          with tf.name_scope('dropout'):
+            dropout = [tf.get_variable('mean', [1, n]),
+                       biased_softplus(tf.get_variable('prec', [1, n]))]
+          with tf.name_scope('mean'):
+            mean = [tf.get_variable('mean', [p, m]),
+                    biased_softplus(tf.get_variable('prec'), [p, m])]
+          with tf.name_scope('dispersion'):
+            dispersion = [tf.get_variable('mean', [p, m]),
+                          biased_softplus(tf.get_variable('prec', [p, m]))]
 
         params = [dropout, mean, dispersion]
+        opt = [p[0] for p in params]
+
         kl_terms = [tf.reduce_sum(kl_normal_normal(mean_, prec_, tf.constant(0.), tf.constant(1.)))
                     for mean_, prec_ in params]
 
-        samples = [sample_gaussian(*p) for p in params]
-        llik = tf.reduce_mean(tf.reduce_sum(zinb_llik(y_ph, *samples), axis=0))
+        dropout = sigmoid(sample_gaussian(*dropout))
+        mean = biased_softplus(sample_gaussian(*mean))
+        dispersion = biased_softplus(sample_gaussian(*dispersion))
+        llik = tf.reduce_mean(tf.reduce_sum(zinb_llik(y, dropout, mean, dispersion), axis=0))
 
         elbo = llik - tf.add_n(kl_terms)
         train = tf.train.RMSPropOptimizer(learning_rate=learning_rate).minimize(-elbo)
         trace = [elbo, llik] + kl_terms
-        opt = [p[0] for p in params]
 
         sess.run(tf.global_variables_initializer())
         for i in range(num_epochs):
@@ -139,7 +155,7 @@
             raise tf.train.NanLossDuringTrainingError
           if verbose and not i % 100:
             print(i, *trace_output)
-        return sess.run(opt, feed_dict={counts: dge})
+        return sess.run(opt, feed_dict={y: counts})
   #+END_SRC
 
   #+RESULTS:
