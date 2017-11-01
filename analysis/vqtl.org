@@ -70,28 +70,31 @@
       min_ = np.log(np.finfo('float32').resolution)
       return tf.nn.sigmoid(tf.clip_by_value(x, min_, -min_))
 
-    def poisson_gamma_llik(x, mean, dispersion):
-      """Return log likelihood of x under Poisson-Gamma model
+    def nb_llik(x, mean, dispersion):
+      """Return log likelihood of x under NB model
 
-      \int_rate Poisson(x; rate) Gamma(rate; mean, dispersion) drate
+      c.f. Hilbe 2012, Eq. 8.10
 
       """
-      return (mean * tf.log(dispersion) +
-              tf.lgamma(x + mean) -
-              tf.lgamma(mean) - 
+      theta = tf.reciprocal(dispersion)
+      return (tf.lgamma(x + theta) -
               tf.lgamma(x + 1) -
-              (x + mean) * tf.log(1 + dispersion))
+              tf.lgamma(theta) +
+              theta * (tf.log(theta) - tf.log(theta + mu)) +
+              x * (tf.log(mu) - tf.log(theta + mu)))
 
     def zinb_llik(x, dropout, mean, dispersion):
       """Return log likelihood of x under ZINB model
 
-      x ~ dropout \delta_0(x) + (1 - dropout) PoissonGamma(x; mean, dispersion)
+      x ~ dropout \delta_0(x) + (1 - dropout) NB(x; mean, dispersion)
+
+      c.f. Hilbe 2012, Eqs. 11.12, 11.13
 
       """
-      # Every x contributes to the PG component
-      zinb_comp = tf.log(1 - dropout) + poisson_gamma_llik(x, mean, dispersion)
-      # tf handles log(0)
-      delta_comp = tf.log(dropout * tf.cast(tf.equal(x, tf.constant(0.)), tf.float32))
+      zeros = tf.cast(tf.equal(x, 0.), tf.float32)
+      case_zero = (tf.softplus(-logit(dropout) + nb_llik(x, mean, dispersion)) -
+                   tf.softplus(-logit(dropout)))
+      case_nonzero = (tf.log(dropout) + nb_llik(x, mean, dispersion))
       return tf.reduce_logsumexp(tf.stack([zinb_comp, delta_comp]), axis=0)
 
     def sample_gaussian(mean, prec, stoch_samples=1):
