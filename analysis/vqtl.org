@@ -33,14 +33,8 @@
     import collections
     import glob
     import os
-    import pandas as pd
-    import rpy2.robjects
-    import rpy2.robjects.packages
-    import rpy2.robjects.pandas2ri as pandas2ri
+    import pandas
     import tensorflow as tf
-
-    r = rpy2.robjects.r
-    biobase = rpy2.robjects.packages.importr('Biobase')
   #+END_SRC
 
   #+RESULTS: imports
@@ -50,22 +44,11 @@
 * Read the data
 
   #+BEGIN_SRC ipython
-    ExpressionSet = collections.namedtuple('ExpressionSet', ['features', 'phenotypes', 'data'])
+    def load_data(proj_dir):
+      counts = pd.read_table(os.path.join(proj_dir), 'data', 'scqtl-counts.txt.gz')
+      annotations = pd.read_table(os.path.join(proj_dir), 'data', 'scqtl-annotation.txt')
 
-    def load_eset(filename):
-      eset = r['readRDS'](filename)
-      fdata = pandas2ri.ri2py(biobase.fData(eset))
-      pdata = pandas2ri.ri2py(biobase.pData(eset))
-      expr_matrix = pd.DataFrame(data=pandas2ri.ri2py(biobase.exprs(eset)), 
-                                 index=fdata.index,
-                                 columns=pdata.index)
-      return ExpressionSet(fdata, pdata, expr_matrix)
-
-    def load_project(dirname):
-      files = glob.glob(os.path.join(dirname, 'data', 'eset', '*.rds'))
-      return [load_eset(f) for f in files]
-
-    esets = load_project(os.path.join(os.getenv('HOME'), 'projects', 'singlecell-qtl'))
+    counts, annotations = load_data(os.path.join(os.getenv('HOME'), 'projects', 'singlecell-qtl'))
   #+END_SRC
 
   #+RESULTS:
