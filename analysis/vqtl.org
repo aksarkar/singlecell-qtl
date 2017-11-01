@@ -101,49 +101,16 @@
       return tf.reduce_logsumexp(tf.stack([zinb_comp, delta_comp]), axis=0)
 
     def sample_gaussian(mean, prec, stoch_samples=1):
-      return mean + tf.random_normal([stoch_samples, 1]) * tf.sqrt(tf.reciprocal(prec))
+      """Return draws from N(mean, prec^-1) 
 
-    def model0(counts, annotations, stoch_samples=10, learning_rate=1e-3):
-      """Return approximate posterior means of dropout, mean, dispersion
-
-      counts ~ ZINB(dropout, mean, dispersion)
-
-      p genes, n cells, m individuals
-
-      counts (p x n) is digital gene expression
-      dropout (1 x n) is pooled across genes and individuals
-      mean (p x m) is pooled across individuals
-      dispersion (p x m) is pooled across individuals
+      Output shape is [stoch_samples] + mean.shape
 
       """
-      p, n = dge.shape
-      m = len(annotations['chip_id'].unique())
+      return mean + tf.random_normal([stoch_samples, 1]) * tf.sqrt(tf.reciprocal(prec))
 
-      with tf.Graph().as_default(), tf.Session() as sess:
-        y = tf.placeholder(tf.float32)
-
-        with tf.variable_scope('q', initializer=tf.random_normal_initializer):
-          with tf.name_scope('dropout'):
-            dropout = [tf.get_variable('mean', [1, n]),
-                       biased_softplus(tf.get_variable('prec', [1, n]))]
-          with tf.name_scope('mean'):
-            mean = [tf.get_variable('mean', [p, m]),
-                    biased_softplus(tf.get_variable('prec'), [p, m])]
-          with tf.name_scope('dispersion'):
-            dispersion = [tf.get_variable('mean', [p, m]),
-                          biased_softplus(tf.get_variable('prec', [p, m]))]
-
-        params = [dropout, mean, dispersion]
-        opt = [p[0] for p in params]
-
-        kl_terms = [tf.reduce_sum(kl_normal_normal(mean_, prec_, tf.constant(0.), tf.constant(1.)))
-                    for mean_, prec_ in params]
-
-        dropout = sigmoid(sample_gaussian(*dropout))
-        mean = biased_softplus(sample_gaussian(*mean))
-        dispersion = biased_softplus(sample_gaussian(*dispersion))
-        llik = tf.reduce_mean(tf.reduce_sum(zinb_llik(y, dropout, mean, dispersion), axis=0))
-
+    def sgvb(llik, kl_terms, opt, learning_rate=1e-3):
+      """Optimize ELBO using Stochastic Gradient Variational Bayes"""
+      with tf.Session() as sess:
         elbo = llik - tf.add_n(kl_terms)
         train = tf.train.RMSPropOptimizer(learning_rate=learning_rate).minimize(-elbo)
         trace = [elbo, llik] + kl_terms
@@ -156,6 +123,53 @@
           if verbose and not i % 100:
             print(i, *trace_output)
         return sess.run(opt, feed_dict={y: counts})
+
+
+    def model0(counts, onehot, stoch_samples=10):
+      """Return approximate posterior means of dropout, mean, dispersion
+
+      counts ~ ZINB(dropout, mean, dispersion)
+
+      p genes, n cells, m individuals
+
+      counts (p x n) is digital gene expression
+      onehot (n x m) is mapping from cells to individuals
+      dropout (1 x n) is pooled across genes and individuals
+      mean (p x m) is pooled across individuals
+      dispersion (p x m) is pooled across individuals
+
+      """
+      p, n = dge.shape
+      _, m = onehot.shape
+      y = tf.placeholder(tf.float32)
+      with tf.variable_scope('q', initializer=tf.random_normal_initializer):
+        with tf.name_scope('dropout'):
+          dropout = [tf.get_variable('mean', [1, n]),
+                     biased_softplus(tf.get_variable('prec', [1, n]))]
+        with tf.name_scope('mean'):
+          mean = [tf.get_variable('mean', [p, m]),
+                  biased_softplus(tf.get_variable('prec'), [p, m])]
+        with tf.name_scope('dispersion'):
+          dispersion = [tf.get_variable('mean', [p, m]),
+                        biased_softplus(tf.get_variable('prec', [p, m]))]
+
+      params = [dropout, mean, dispersion]
+      opt = [p[0] for p in params]
+
+      kl_terms = [tf.reduce_sum(kl_normal_normal(mean_, prec_, tf.constant(0.), tf.constant(1.)))
+                  for mean_, prec_ in params]
+
+      dropout = sigmoid(sample_gaussian(*dropout))
+      mean = biased_softplus(sample_gaussian(*mean))
+      dispersion = biased_softplus(sample_gaussian(*dispersion))
+      llik = zinb_llik(y, dropout, mean * tf.transpose(onehot), dispersion * tf.transpose(onehot))
+      llik = tf.reduce_mean(tf.reduce_sum(llik, axis=[1, 2]), axis=0)
+
+      return sgvb(llik, kl_terms, opt, learning_rate=learning_rate)
+
+    def fit_data(counts, annotations):
+      with tf.Graph().as_default():
+        model0(counts, annotations)
   #+END_SRC
 
   #+RESULTS:
