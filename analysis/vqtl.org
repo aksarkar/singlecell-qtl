@@ -86,8 +86,8 @@
       return (tf.lgamma(x + theta) -
               tf.lgamma(x + 1) -
               tf.lgamma(theta) +
-              theta * (tf.log(theta) - tf.log(theta + mu)) +
-              x * (tf.log(mu) - tf.log(theta + mu)))
+              theta * (tf.log(theta) - tf.log(theta + mean)) +
+              x * (tf.log(mean) - tf.log(theta + mean)))
 
     def zinb_llik(x, dropout, mean, dispersion):
       """Return log likelihood of x under ZINB model
@@ -98,10 +98,14 @@
 
       """
       zeros = tf.cast(tf.equal(x, 0.), tf.float32)
-      case_zero = (tf.softplus(-logit(dropout) + nb_llik(x, mean, dispersion)) -
-                   tf.softplus(-logit(dropout)))
+      case_zero = (tf.nn.softplus(-logit(dropout) + nb_llik(x, mean, dispersion)) -
+                   tf.nn.softplus(-logit(dropout)))
       case_nonzero = (tf.log(dropout) + nb_llik(x, mean, dispersion))
-      return tf.reduce_logsumexp(tf.stack([zinb_comp, delta_comp]), axis=0)
+      return zeros * case_zero + (1 - zeros) * case_nonzero
+
+    def kl_normal_normal(mean_a, prec_a, mean_b, prec_b, reduce=True):
+      """Rasmussen & Williams eq. A.23 for univariate Gaussians"""
+      return .5 * (1 + tf.log(prec_a) - tf.log(prec_b) + prec_b * (tf.square(mean_a - mean_b) + 1 / prec_a))
 
     def sample_gaussian(mean, prec, stoch_samples=1):
       """Return draws from N(mean, prec^-1) 
