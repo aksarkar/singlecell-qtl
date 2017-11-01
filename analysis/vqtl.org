@@ -141,22 +141,22 @@
 
       counts (p x n) is digital gene expression
       onehot (n x m) is mapping from cells to individuals
-      dropout (1 x n) is pooled across genes and individuals
-      mean (p x m) is pooled across individuals
-      dispersion (p x m) is pooled across individuals
+      dropout (1 x n) is pooled across genes
+      mean (p x m) is pooled across cells
+      dispersion (p x m) is pooled across cells
 
       """
-      p, n = dge.shape
+      p, n = counts.shape
       _, m = onehot.shape
       y = tf.placeholder(tf.float32)
       with tf.variable_scope('q', initializer=tf.random_normal_initializer):
-        with tf.name_scope('dropout'):
+        with tf.variable_scope('dropout'):
           dropout = [tf.get_variable('mean', [1, n]),
                      biased_softplus(tf.get_variable('prec', [1, n]))]
-        with tf.name_scope('mean'):
+        with tf.variable_scope('mean'):
           mean = [tf.get_variable('mean', [p, m]),
-                  biased_softplus(tf.get_variable('prec'), [p, m])]
-        with tf.name_scope('dispersion'):
+                  biased_softplus(tf.get_variable('prec', [p, m]))]
+        with tf.variable_scope('dispersion'):
           dispersion = [tf.get_variable('mean', [p, m]),
                         biased_softplus(tf.get_variable('prec', [p, m]))]
 
@@ -166,17 +166,23 @@
       kl_terms = [tf.reduce_sum(kl_normal_normal(mean_, prec_, tf.constant(0.), tf.constant(1.)))
                   for mean_, prec_ in params]
 
-      dropout = sigmoid(sample_gaussian(*dropout))
-      mean = biased_softplus(sample_gaussian(*mean))
-      dispersion = biased_softplus(sample_gaussian(*dispersion))
-      llik = zinb_llik(y, dropout, mean * tf.transpose(onehot), dispersion * tf.transpose(onehot))
-      llik = tf.reduce_mean(tf.reduce_sum(llik, axis=[1, 2]), axis=0)
+      dropout = sigmoid(sample_gaussian(*dropout, stoch_samples))
+      mean = biased_softplus(sample_gaussian(*mean, stoch_samples))
+      dispersion = biased_softplus(sample_gaussian(*dispersion, stoch_samples))
+      error = zinb_llik(y, dropout,
+                        tf.matmul(mean, onehot, transpose_b=True),
+                        tf.matmul(dispersion, onehot, transpose_b=True))
+      error = tf.reduce_mean(tf.reduce_sum(error, axis=[1, 2]), axis=0)
 
-      return sgvb(llik, kl_terms, opt, learning_rate=learning_rate)
+      return sgvb(error, kl_terms, opt, feed_dict={y: counts}, **kwargs)
 
-    def fit_data(counts, annotations):
+    def fit_data(counts):
+      individuals = [k.split('.')[0] for k in counts.columns.values]
+      keys = sorted(set(individuals))
+      mapping = [keys.index(i) for i in ind]
       with tf.Graph().as_default():
-        model0(counts, annotations)
+        onehot = tf.one_hot(mapping, len(keys))
+        return model0(counts, onehot)
   #+END_SRC
 
   #+RESULTS:
@@ -184,8 +190,13 @@
   :END:
 
   #+BEGIN_SRC ipython :results output
-  model0()
+    fit_data(counts)
   #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  09b851ec-f8d0-4846-b7d8-63c08c02f064
+  :END:
 
 * Spike-and-slab version                                           :noexport:
 
