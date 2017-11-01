@@ -10,7 +10,7 @@
 #+SELECT_TAGS: export
 #+EXCLUDE_TAGS: noexport
 #+CREATOR: Emacs 25.1.1 (Org mode 9.1.2)
-#+PROPERTY: header-args:ipython+ :session kernel-aksarkar.json :results raw drawer :async t
+#+PROPERTY: header-args:ipython+ :session kernel-aksarkar.json :results raw drawer :async t :eval never-export
 
 * Setup
 
