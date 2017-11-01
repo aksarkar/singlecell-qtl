@@ -115,24 +115,24 @@
       """
       return mean + tf.random_normal([stoch_samples, 1]) * tf.sqrt(tf.reciprocal(prec))
 
-    def sgvb(llik, kl_terms, opt, learning_rate=1e-3):
+    def sgvb(error, kl_terms, opt, feed_dict, num_epochs=1000, learning_rate=1e-3):
       """Optimize ELBO using Stochastic Gradient Variational Bayes"""
       with tf.Session() as sess:
-        elbo = llik - tf.add_n(kl_terms)
+        elbo = error - tf.add_n(kl_terms)
         train = tf.train.RMSPropOptimizer(learning_rate=learning_rate).minimize(-elbo)
-        trace = [elbo, llik] + kl_terms
+        trace = [elbo, error] + kl_terms
 
         sess.run(tf.global_variables_initializer())
         for i in range(num_epochs):
-          _, trace_output = sess.run([train, trace], feed_dict={x_ph: x, y_ph: y})
+          _, trace_output = sess.run([train, trace], feed_dict=feed_dict)
           if np.isnan(trace_output[0]):
             raise tf.train.NanLossDuringTrainingError
           if verbose and not i % 100:
             print(i, *trace_output)
-        return sess.run(opt, feed_dict={y: counts})
+        return sess.run(opt, feed_dict=feed_dict)
 
 
-    def model0(counts, onehot, stoch_samples=10):
+    def model0(counts, onehot, stoch_samples=10, **kwargs):
       """Return approximate posterior means of dropout, mean, dispersion
 
       counts ~ ZINB(dropout, mean, dispersion)
