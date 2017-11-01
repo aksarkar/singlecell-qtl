@@ -1,4 +1,4 @@
-#+TITLE: QTL mapping
+#+TITLE: ZINB estimation
 #+DATE: <2017-10-25 Wed>
 #+AUTHOR: Abhishek Sarkar
 #+EMAIL: aksarkar@uchicago.edu
@@ -15,6 +15,8 @@
 
 * Setup
 
+  This has to be run on the ~gpu2~ partition since it depends on ~libcuda.so~
+
   #+NAME: ipython3-kernel
   #+BEGIN_SRC shell :dir (concat (file-name-as-directory (getenv "SCRATCH")) "singlecell") :var RESOURCES="--mem=8G --partition=gpu2"
     sbatch $RESOURCES --job-name=ipython3 --output=ipython3.out
@@ -25,16 +27,15 @@
   #+END_SRC
 
   #+RESULTS: ipython3-kernel
-  : Submitted batch job 39746532
+  : Submitted batch job 39833074
 
   #+NAME: imports
   #+BEGIN_SRC ipython
     %matplotlib inline
 
-    import collections
-    import glob
     import os
-    import pandas
+    import numpy as np
+    import pandas as pd
     import tensorflow as tf
   #+END_SRC
 
