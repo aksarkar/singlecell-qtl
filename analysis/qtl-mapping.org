@@ -1,0 +1,295 @@
+#+TITLE: QTL mapping pipeline
+#+SETUPFILE: setup.org
+
+* Introduction
+
+  Here, we set up the infrastructure to call mean and variance QTLs. 
+
+  The key issues are:
+
+  1. *How do we account for confounders in UMI?* As a first pass (to test the
+     pipeline), use preliminary QC filters and assume no confounding.
+  2. *Do we account for zeros?* As a first pass, we can estimate means and
+     variances per individual using only detected genes.
+  3. *Do we jointly model mean and variance QTLs?* As a first pass, we can
+     simply include the observed mean in the variance QTL model (like ~voom~,
+     [[http://genomebiology.com/2014/15/2/R29][Law et al 2014]]).
+  4. *What parameters are shared between cells/individuals/genes?* As a first
+     pass, assume no parameters are shared.
+
+* Setup                                                            :noexport:
+
+  #+BEGIN_SRC emacs-lisp
+    (org-babel-lob-ingest "/home/aksarkar/projects/singlecell-qtl/analysis/sc-vs-bulk.org")
+    (org-babel-lob-ingest "/home/aksarkar/.emacs.d/org-templates/library.org")
+  #+END_SRC
+
+  #+RESULTS:
+  : 1
+
+  #+CALL: ipython3(memory="16G", venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
+
+  #+RESULTS:
+  : Submitted batch job 40916778
+
+  #+BEGIN_SRC ipython
+    import functools
+    import os.path
+    import numpy as np
+    import pandas as pd
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+CALL: concordance-def()
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+CALL: load-data-defs()
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+CALL: load-data()
+
+* Quality control on expression
+
+  Filter out cells on percent spike-in and gene detection rate, and filter out
+  genes on individual detection rate.
+
+  #+BEGIN_SRC ipython
+    keep_cells = functools.reduce(
+      np.logical_and,
+      [
+        annotations['reads_ercc'] / annotations.filter(like='reads_', axis=1).agg(np.sum, axis=1) < 0.5,
+        annotations['detect_hs'] > 4000,
+      ]).values
+    keep_genes = functools.reduce(
+      np.logical_and,
+      [
+        (umi.groupby(annotations['chip_id'].values, axis=1).agg(np.sum) > 0).apply(lambda x: x.mean() > 0.5, axis=1)
+      ]).values
+    umi_qc = umi.loc[keep_genes, keep_cells]
+    annotations_qc = annotations.loc[keep_cells]
+    umi_qc.mask(umi_qc == 0)
+    umi_qc.shape
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  : (15636, 1861)
+  :END:
+
+* Mean-QTL calling
+
+  Estimate the mean count per individual, per gene using non-zero counts only,
+  then transform to \(log_2(CPM + 1)\). 
+
+  We still have to deal with the case where a gene is not detected in any cells
+  in a particular individual. As a first pass, simply treat their mean
+  expression as a true zero.
+
+  #+BEGIN_SRC ipython
+    vcf = (pd.read_table('/project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz', nrows=1)
+           .rename(columns=lambda x: 'NA{}'.format(x) if x.startswith('1') else x))
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+BEGIN_SRC ipython
+    mean = cpm(umi_qc.mask(umi_qc == 0)
+               .groupby(annotations_qc['chip_id'].values, axis=1)
+               .agg(np.mean)
+               .filter(items=vcf.columns)
+               .rename(columns=lambda x: x[2:])  # match original VCF
+               .fillna(0),
+               log2=True)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  Write out the [[https://qtltools.github.io/qtltools/pages/input_files.html][phenotype file]] for ~QTLtools~.
+
+  #+BEGIN_SRC ipython
+    gene_info = (pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/scqtl-genes.txt.gz')
+                 .set_index('gene')
+                 .query('source == "H. sapiens"')
+                 .query('chr != "hsX"')
+                 .query('chr != "hsY"')
+                 .query('chr != "hsMT"'))
+    gene_info.head()
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  #+BEGIN_EXAMPLE
+                    chr      start        end      name strand      source
+    gene                                                                    
+    ENSG00000000419  hs20   49551404   49575092      DPM1      -  H. sapiens
+    ENSG00000000457   hs1  169818772  169863408     SCYL3      -  H. sapiens
+    ENSG00000000460   hs1  169631245  169823221  C1orf112      +  H. sapiens
+    ENSG00000000938   hs1   27938575   27961788       FGR      -  H. sapiens
+    ENSG00000000971   hs1  196621008  196716634       CFH      +  H. sapiens
+  #+END_EXAMPLE
+  :END:
+
+  #+BEGIN_SRC ipython
+    def qtltools_format(row):
+      row['#Chr'] = 'chr{}'.format(row['chr'][2:])
+      row['gid'] = row.name
+      row['pid'] = row.name
+      return row
+
+    (gene_info
+     .apply(qtltools_format, axis=1)
+     .merge(mean, left_index=True, right_index=True)
+     .to_csv('mean.bed',
+             sep='\t',
+             columns=['#Chr', 'start', 'end', 'pid', 'gid', 'strand'] + list(mean.columns),
+             header=True,
+             index=False,
+             index_label=False)
+    )
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  Index the phenotype file.
+
+  #+BEGIN_SRC sh :dir /scratch/midway2/aksarkar/singlecell
+    sbatch --partition=mstephens
+    #!/bin/bash
+    sort -k1,1 -k2,2n -k3,3n mean.bed | bgzip >mean.bed.gz
+    tabix -p bed mean.bed.gz
+  #+END_SRC
+
+  #+RESULTS:
+  : Submitted batch job 40920147
+
+  Run the QTL mapping.
+
+  #+BEGIN_SRC sh :dir /scratch/midway2/aksarkar/singlecell
+    sbatch --partition=mstephens -c4 -J mean-qtl -o mean-qtl.log
+    #!/bin/bash
+    parallel -j4 qtltools cis --vcf /project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz --bed mean.bed.gz --nominal=0.01 --chunk {#} 100 --out mean-qtl.{#}.txt ::: $(seq 1 100)
+  #+END_SRC
+
+  Read the results.
+
+  #+BEGIN_SRC ipython
+    mean_qtls = (pd.concat([pd.read_table('mean-qtl.{}.txt'.format(i), header=None, sep=' ') for i in range(1, 101) if os.path.getsize('mean-qtl.{}.txt'.format(i)) > 0])
+                 .rename(columns={i: x for i, x in enumerate(['gene', 'chr', 'start', 'end', 'strand', 'num_vars', 'distance', 'id', 'var_chr', 'var_start', 'var_end', 'p', 'beta', 'top'])})
+                 .set_index('gene'))
+    mean_qtls.head()
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  #+BEGIN_EXAMPLE
+                    chr   start     end strand  num_vars  distance id var_chr  \
+    gene                                                                          
+    ENSG00000237683  chr1  134902  139379      -      1720    134902  T    chr1   
+    ENSG00000237683  chr1  134902  139379      -      1720    134902  C    chr1   
+    ENSG00000237683  chr1  134902  139379      -      1720    134902  G    chr1   
+    ENSG00000237683  chr1  134902  139379      -      1720    134902  A    chr1   
+    ENSG00000237683  chr1  134902  139379      -      1720    134902  T    chr1   
+
+                     var_start  var_end         p      beta  top  
+    gene                                                          
+    ENSG00000237683     793228        0  0.004931  0.569071    0  
+    ENSG00000237683     796101        0  0.008686  0.527685    0  
+    ENSG00000237683     845275        0  0.006838  0.175679    0  
+    ENSG00000237683     846339        0  0.008093  0.215268    0  
+    ENSG00000237683     846490        0  0.008093  0.215268    0  
+  #+END_EXAMPLE
+  :END:
+
+  *TODO:* Permutation testing within QTLtools? Multiple testing correction by
+  ~ashr~?
+
+  Compute the total number of QTLs detected.
+
+  #+BEGIN_SRC ipython
+    mean_qtls.groupby(level=0)['chr'].agg(len).sum()
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  : 9287
+  :END:
+
+  Compare against the bulk RNA-Seq mean-QTLs.
+
+  #+BEGIN_SRC ipython
+    def bulk_mean_qtl_format(row):
+      row['pid'] = row['pid'].split('.')[0]
+      row['rsid'], row['var_chr'], row['var_start'] = row['dummy2'].split('.')
+      del row['dummy2']
+      return row
+
+    bulk_mean_qtls = (pd.read_table('/project2/gilad/singlecell-qtl/bulk/permutations.all.RNAseq_run.fixed.txt.gz.bh.txt', sep=' ')
+                      .apply(bulk_mean_qtl_format, axis=1)
+                      .set_index('pid'))
+    bulk_mean_qtls.head()
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  #+BEGIN_EXAMPLE
+                          bpval        rsid var_chr var_start
+    pid                                                        
+    ENSG00000047056  1.065450e-03  rs12268949   chr10   1104257
+    ENSG00000196139  6.354310e-03   rs1937889   chr10   5057741
+    ENSG00000237943  2.074140e-04   rs4515867   chr10   6672053
+    ENSG00000165623  1.970260e-04   rs7893239   chr10  13275510
+    ENSG00000152457  2.142050e-09   rs7084951   chr10  15013439
+  #+END_EXAMPLE
+  :END:
+
+* Variance-QTL calling
+
+  The fundamental relationship derived by [[http://genomebiology.com/2014/15/2/R29][Law et al 2014]] to transform to
+  Gaussian phenotypes is:
+
+  \[ \mathrm{variance} = \frac{1}{\mathrm{mean}} + \mathrm{dispersion} \]
+
+  *TODO:* Do we need to worry about mean QTLs in LD with variance QTLs? Can we
+  just plug in the mean? Should we use predictions from multivariate mean-QTL
+  models? Should we fit a Gaussian process regression (per individual, or
+  pooling all individuals)?
+
+* Next steps
+   
+  1. We previously used half-sibling regression ([[https://www.pnas.org/cgi/doi/10.1073/pnas.1511656113][Scholkopf et al 2016]]) to correct
+     confounders for bulk RNA-Seq in GTEx ([[http://dx.doi.org/10.1101/107623][Park et al 2017]]).
+
+     The key idea is that the only ways we could predict the expression of a
+     gene of interest using genes on other chromosomes are (1) true
+     /trans/-regulation and (2) shared confounding. For /cis/-QTL mapping, we
+     want to eliminate both of these, which we can do by simply regressing out
+     gene expression of all genes on all other chromosomes.
+
+     One open question is whether we should correct counts (which would be
+     required to solve issue (3)) or 
+
+  2. We previously built an [[https://github.com/YPARK/fqtl][inference engine which supports negative binomial
+     models]] which could be easily extended to zero-inflated negative binomial
+     models.
+
+     In our experiments directly using the negative binomial likelihood
+     outperformed the Gaussian model (following the ~voom~-transform, but
+     sharing the mean model parameters in the dispersion model).
+
+     This would allow us to solve issues (2) and (3), and potentially make (4)
+     easier.
