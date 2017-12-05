@@ -281,7 +281,7 @@
      gene expression of all genes on all other chromosomes.
 
      One open question is whether we should correct counts (which would be
-     required to solve issue (3)) or 
+     required to solve issue (3)), or correct per-individual means/variances.
 
   2. We previously built an [[https://github.com/YPARK/fqtl][inference engine which supports negative binomial
      models]] which could be easily extended to zero-inflated negative binomial
