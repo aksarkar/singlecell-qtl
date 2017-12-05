@@ -1,66 +1,46 @@
 #+TITLE: ZINB estimation
-#+DATE: <2017-10-25 Wed>
-#+AUTHOR: Abhishek Sarkar
-#+EMAIL: aksarkar@uchicago.edu
-#+OPTIONS: ':nil *:t -:t ::t <:t H:3 \n:nil ^:t arch:headline author:t
-#+OPTIONS: broken-links:nil c:nil creator:nil d:(not "LOGBOOK") date:t e:t
-#+OPTIONS: email:nil f:t inline:t num:t p:nil pri:nil prop:nil stat:t tags:t
-#+OPTIONS: tasks:t tex:t timestamp:t title:t toc:t todo:t |:t
-#+LANGUAGE: en
-#+SELECT_TAGS: export
-#+EXCLUDE_TAGS: noexport
-#+CREATOR: Emacs 25.1.1 (Org mode 9.1.2)
-#+SETUPFILE: /home/aksarkar/.local/src/org-html-themes/setup/theme-readtheorg.setup
-#+PROPERTY: header-args:ipython+ :session kernel-aksarkar.json :results raw drawer :async t :eval never-export
+#+SETUPFILE: setup.org
 
-* Setup
+* Introduction
+
+  Here, we estimate means, variances, and dropout rates of the single cell data
+  using a hierarchical zero-inflated negative binomial model.
+
+* Setup                                                            :noexport:
+
+  #+BEGIN_SRC emacs-lisp
+    (org-babel-lob-ingest "/home/aksarkar/projects/singlecell-qtl/analysis/sc-vs-bulk.org")
+    (org-babel-lob-ingest "/home/aksarkar/.emacs.d/org-templates/library.org")
+  #+END_SRC
 
   This has to be run on the ~gpu2~ partition since it depends on ~libcuda.so~
 
-  #+NAME: ipython3-kernel
-  #+BEGIN_SRC shell :dir (concat (file-name-as-directory (getenv "SCRATCH")) "singlecell") :var RESOURCES="--mem=8G --partition=gpu2"
-    sbatch $RESOURCES --job-name=ipython3 --output=ipython3.out
-    #!/bin/bash
-    source activate scqtl
-    rm -f $HOME/.local/share/jupyter/runtime/kernel-aksarkar.json
-    ipython3 kernel --ip=$(hostname -i) -f kernel-aksarkar.json
-  #+END_SRC
+  #+CALL: ipython3(venv="scqtl", memory="8G", partition="gpu2")
 
-  #+RESULTS: ipython3-kernel
-  : Submitted batch job 39833074
+  #+RESULTS:
+  : 1
 
-  #+NAME: imports
   #+BEGIN_SRC ipython
     %matplotlib inline
 
-    import os
     import numpy as np
     import pandas as pd
     import tensorflow as tf
-  #+END_SRC
-
-  #+RESULTS: imports
-  :RESULTS:
-  :END:
-
-* Read the data
-
-  #+BEGIN_SRC ipython
-    def load_data(proj_dir):
-      counts = pd.read_table(os.path.join(proj_dir, 'data', 'scqtl-counts.txt.gz'), index_col=0)
-      annotations = pd.read_table(os.path.join(proj_dir, 'data', 'scqtl-annotation.txt'))
-      return counts, annotations
-
-    counts, annotations = load_data(os.path.join(os.getenv('HOME'), 'projects', 'singlecell-qtl'))
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
   :END:
 
+  #+CALL: load-data-defs()
+
+  #+CALL: load-data()
+
 * ZINB model
 
-  #+BEGIN_SRC ipython
+  Hiding the technical details of the implementation, we specify the model below:
+
+  #+BEGIN_SRC ipython :exports none
     def biased_softplus(x, bias=1e-6):
       return bias + tf.nn.softplus(x)
 
@@ -130,8 +110,13 @@
           if verbose and not i % 100:
             print(i, *trace_output)
         return sess.run(opt, feed_dict=feed_dict)
+  #+END_SRC
 
+  #+RESULTS:
+  :RESULTS:
+  :END:
 
+  #+BEGIN_SRC ipython
     def model0(counts, onehot, stoch_samples=10, **kwargs):
       """Return approximate posterior means of dropout, mean, dispersion
 
@@ -139,11 +124,17 @@
 
       p genes, n cells, m individuals
 
-      counts (p x n) is digital gene expression
-      onehot (n x m) is mapping from cells to individuals
-      dropout (1 x n) is pooled across genes
-      mean (p x m) is pooled across cells
-      dispersion (p x m) is pooled across cells
+      Parameters:
+        counts - UMI count matrix (p, n)
+        onehot - Mapping from cells to individuals (n, m)
+
+      Returns: 
+        dropout_mean - posterior of mean dropout log odds (n, p)
+        dropout_var - posterior variance of dropout log odds (n, p)
+        mean_mean - posterior mean of mean expression (m, p)
+        mean_var - posterior variance of mean expression (m, p)
+        dispersion_mean - posterior mean of dispersion (m, p)
+        dispersion_var - posterior variance of dispersion (m, p)
 
       """
       p, n = counts.shape
@@ -151,20 +142,40 @@
       y = tf.placeholder(tf.float32)
       with tf.variable_scope('q', initializer=tf.random_normal_initializer):
         with tf.variable_scope('dropout'):
-          dropout = [tf.get_variable('mean', [1, n]),
-                     biased_softplus(tf.get_variable('prec', [1, n]))]
+          dropout = [tf.get_variable('mean', [n, p]),
+                     biased_softplus(tf.get_variable('prec', [n, p]))]
         with tf.variable_scope('mean'):
           mean = [tf.get_variable('mean', [p, m]),
                   biased_softplus(tf.get_variable('prec', [p, m]))]
         with tf.variable_scope('dispersion'):
           dispersion = [tf.get_variable('mean', [p, m]),
                         biased_softplus(tf.get_variable('prec', [p, m]))]
+        with tf.variable_scope('shared_dropout'):
+          shared_dropout = [tf.get_variable('mean', [1]),
+                            biased_softplus(tf.get_variable('prec', [1]))]
+        # For each gene, share common mean and dispersion across individuals
+        with tf.variable_scope('shared_mean'):
+          shared_mean = [tf.get_variable('mean', [p, 1]),
+                         biased_softplus(tf.get_variable('prec', [p, 1]))]
+        with tf.variable_scope('shared_dropout'):
+          shared_dispersion = [tf.get_variable('mean', [p, 1]),
+                               biased_softplus(tf.get_variable('prec', [p, 1]))]
 
-      params = [dropout, mean, dispersion]
-      opt = [p[0] for p in params]
+      params = [dropout, mean, dispersion, shared_dropout, shared_mean, shared_dispersion]
 
-      kl_terms = [tf.reduce_sum(kl_normal_normal(mean_, prec_, tf.constant(0.), tf.constant(1.)))
-                  for mean_, prec_ in params]
+      hyper_kl_terms = [
+        kl_normal_normal(shared_dropout[0], shared_dropout[1], )
+      ]
+
+      shared_dropout = sigmoid(sample_gaussian(*shared_dropout, stoch_samples))
+      shared_mean = sample_gaussian(*shared_mean, stoch_samples)
+      shared_dispersion = sample_gaussian(*shared_dispersion, stoch_samples)
+
+      kl_terms = [
+        tf.reduce_mean(tf.reduce_sum(kl_normal_normal(dropout[0], dropout[1], shared_dropout, 1), axis=1)),
+        tf.reduce_mean(tf.reduce_sum(kl_normal_normal(mean[0], mean[1], shared_mean, 1), axis=1)),
+        tf.reduce_mean(tf.reduce_sum(kl_normal_normal(dispersion[0], dispersion[1], shared_dispersion), axis=1)),
+      ]
 
       dropout = sigmoid(sample_gaussian(*dropout, stoch_samples))
       mean = biased_softplus(sample_gaussian(*mean, stoch_samples))
@@ -183,11 +194,8 @@
       with tf.Graph().as_default():
         onehot = tf.one_hot(mapping, len(keys))
         return model0(counts, onehot)
-  #+END_SRC
 
-  #+RESULTS:
-  :RESULTS:
-  :END:
+  #+END_SRC
 
   #+BEGIN_SRC ipython :results output
     fit_data(counts)
