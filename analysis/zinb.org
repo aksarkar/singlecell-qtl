@@ -6,6 +6,11 @@
   Here, we estimate means, variances, and dropout rates of the single cell data
   using a hierarchical zero-inflated negative binomial model.
 
+  The basic idea is that after fitting the model, we will recover an
+  individual-by-gene mean matrix and individual-by-gene dispersion matrix. We
+  can use the columns of this matrix as continuous phenotypes to plug into
+  existing QTL mapping software.
+
 * Setup                                                            :noexport:
 
   #+BEGIN_SRC emacs-lisp
@@ -23,9 +28,11 @@
   #+BEGIN_SRC ipython
     %matplotlib inline
 
+    import edward as ed
     import numpy as np
     import pandas as pd
     import tensorflow as tf
+    import tensorflow.contrib.distributions as ds
   #+END_SRC
 
   #+RESULTS:
@@ -38,86 +45,78 @@
 
 * ZINB model
 
-  Hiding the technical details of the implementation, we specify the model below:
+  Hiding the technical details of the model implementation, we specify the
+  model in [[http://edwardlib.org/][Edward]]:
 
+  #+NAME: zinb-def
   #+BEGIN_SRC ipython :exports none
-    def biased_softplus(x, bias=1e-6):
-      return bias + tf.nn.softplus(x)
-
     def logit(x):
       return tf.reciprocal(1 + tf.exp(-x))
 
-    def sigmoid(x):
-      """Sigmoid clipped to float32 resolution
-
-      This is needed because sigmoid(x) = 0 leads to NaN downstream
+    class _ZINB(ds.Distribution):
+      """Zero-inflated negative binomial random variable
 
       """
-      min_ = np.log(np.finfo('float32').resolution)
-      return tf.nn.sigmoid(tf.clip_by_value(x, min_, -min_))
+      def __init__(self, dropout, mean, dispersion, validate_args=False,
+                   allow_nan_stats=False, name='ZINB'):
+        parameters = locals()
+        with tf.name_scope(name, values=[dropout, mean, dispersion]):
+          self._dropout = tf.identity(dropout, name="dropout")
+          self._mean = tf.identity(mean, name="mean")
+          self._dispersion = tf.identity(dispersion, name="dispersion")
+        super(_ZINB, self).__init__(
+            allow_nan_stats=allow_nan_stats,
+            dtype=self._mean.dtype,
+            graph_parents=[self._dropout, self._mean, self._dispersion],
+            name=name,
+            parameters=parameters,
+            reparameterization_type=ds.FULLY_REPARAMETERIZED,
+            validate_args=validate_args,
+        )
 
-    def nb_llik(x, mean, dispersion):
-      """Return log likelihood of x under NB model
+      def nb_llik(self, x):
+        """Return log likelihood of x under NB model
 
-      c.f. Hilbe 2012, Eq. 8.10
+        c.f. Hilbe 2012, Eq. 8.10
 
-      """
-      theta = tf.reciprocal(dispersion)
-      return (tf.lgamma(x + theta) -
-              tf.lgamma(x + 1) -
-              tf.lgamma(theta) +
-              theta * (tf.log(theta) - tf.log(theta + mean)) +
-              x * (tf.log(mean) - tf.log(theta + mean)))
+        """
+        theta = tf.reciprocal(self._dispersion)
+        return (tf.lgamma(x + theta) -
+                tf.lgamma(x + 1) -
+                tf.lgamma(theta) +
+                theta * (tf.log(theta) - tf.log(theta + self._mean)) +
+                x * (tf.log(self._mean) - tf.log(theta + self._mean)))
 
-    def zinb_llik(x, dropout, mean, dispersion):
-      """Return log likelihood of x under ZINB model
+      def _log_prob(self, x):
+        """Return log likelihood of x under ZINB model
 
-      x ~ dropout \delta_0(x) + (1 - dropout) NB(x; mean, dispersion)
+        x ~ dropout \delta_0(x) + (1 - dropout) NB(x; mean, dispersion)
 
-      c.f. Hilbe 2012, Eqs. 11.12, 11.13
+        c.f. Hilbe 2012, Eqs. 11.12, 11.13
 
-      """
-      zeros = tf.cast(tf.equal(x, 0.), tf.float32)
-      case_zero = (tf.nn.softplus(-logit(dropout) + nb_llik(x, mean, dispersion)) -
-                   tf.nn.softplus(-logit(dropout)))
-      case_nonzero = (tf.log(dropout) + nb_llik(x, mean, dispersion))
-      return zeros * case_zero + (1 - zeros) * case_nonzero
+        """
+        zeros = tf.cast(tf.equal(x, 0.), tf.float32)
+        case_zero = (tf.nn.softplus(-logit(self._dropout) + self.nb_llik(x)) -
+                     tf.nn.softplus(-logit(self._dropout)))
+        case_nonzero = (tf.log(self._dropout) + self.nb_llik(x))
+        return zeros * case_zero + (1 - zeros) * case_nonzero
 
-    def kl_normal_normal(mean_a, prec_a, mean_b, prec_b, reduce=True):
-      """Rasmussen & Williams eq. A.23 for univariate Gaussians"""
-      return .5 * (1 + tf.log(prec_a) - tf.log(prec_b) + prec_b * (tf.square(mean_a - mean_b) + 1 / prec_a))
+      def _sample_n(self, n):
+        raise NotImplementedError
 
-    def sample_gaussian(mean, prec, stoch_samples=1):
-      """Return draws from N(mean, prec^-1) 
-
-      Output shape is [stoch_samples] + mean.shape
-
-      """
-      return mean + tf.random_normal([stoch_samples, 1]) * tf.sqrt(tf.reciprocal(prec))
-
-    def sgvb(error, kl_terms, opt, feed_dict, num_epochs=1000, learning_rate=1e-3):
-      """Optimize ELBO using Stochastic Gradient Variational Bayes"""
-      with tf.Session() as sess:
-        elbo = error - tf.add_n(kl_terms)
-        train = tf.train.RMSPropOptimizer(learning_rate=learning_rate).minimize(-elbo)
-        trace = [elbo, error] + kl_terms
-
-        sess.run(tf.global_variables_initializer())
-        for i in range(num_epochs):
-          _, trace_output = sess.run([train, trace], feed_dict=feed_dict)
-          if np.isnan(trace_output[0]):
-            raise tf.train.NanLossDuringTrainingError
-          if verbose and not i % 100:
-            print(i, *trace_output)
-        return sess.run(opt, feed_dict=feed_dict)
+    class ZINB(ed.models.RandomVariable, _ZINB):
+      def __init__(self, *args, **kwargs):
+        if 'mean' in kwargs:
+            mean = kwargs['mean']
+        else:
+            mean = args[1]
+        if 'value' not in kwargs:
+            kwargs['value'] = tf.zeros_like(mean)
+        RandomVariable.__init__(self, *args, **kwargs)
   #+END_SRC
 
-  #+RESULTS:
-  :RESULTS:
-  :END:
-
   #+BEGIN_SRC ipython
-    def model0(counts, onehot, stoch_samples=10, **kwargs):
+    def model0(counts, onehot):
       """Return approximate posterior means of dropout, mean, dispersion
 
       counts ~ ZINB(dropout, mean, dispersion)
@@ -125,7 +124,7 @@
       p genes, n cells, m individuals
 
       Parameters:
-        counts - UMI count matrix (p, n)
+        counts - UMI count matrix (n, p)
         onehot - Mapping from cells to individuals (n, m)
 
       Returns: 
@@ -139,158 +138,38 @@
       """
       p, n = counts.shape
       _, m = onehot.shape
-      y = tf.placeholder(tf.float32)
-      with tf.variable_scope('q', initializer=tf.random_normal_initializer):
-        with tf.variable_scope('dropout'):
-          dropout = [tf.get_variable('mean', [n, p]),
-                     biased_softplus(tf.get_variable('prec', [n, p]))]
-        with tf.variable_scope('mean'):
-          mean = [tf.get_variable('mean', [p, m]),
-                  biased_softplus(tf.get_variable('prec', [p, m]))]
-        with tf.variable_scope('dispersion'):
-          dispersion = [tf.get_variable('mean', [p, m]),
-                        biased_softplus(tf.get_variable('prec', [p, m]))]
-        with tf.variable_scope('shared_dropout'):
-          shared_dropout = [tf.get_variable('mean', [1]),
-                            biased_softplus(tf.get_variable('prec', [1]))]
-        # For each gene, share common mean and dispersion across individuals
-        with tf.variable_scope('shared_mean'):
-          shared_mean = [tf.get_variable('mean', [p, 1]),
-                         biased_softplus(tf.get_variable('prec', [p, 1]))]
-        with tf.variable_scope('shared_dropout'):
-          shared_dispersion = [tf.get_variable('mean', [p, 1]),
-                               biased_softplus(tf.get_variable('prec', [p, 1]))]
 
-      params = [dropout, mean, dispersion, shared_dropout, shared_mean, shared_dispersion]
-
-      hyper_kl_terms = [
-        kl_normal_normal(shared_dropout[0], shared_dropout[1], )
-      ]
-
-      shared_dropout = sigmoid(sample_gaussian(*shared_dropout, stoch_samples))
-      shared_mean = sample_gaussian(*shared_mean, stoch_samples)
-      shared_dispersion = sample_gaussian(*shared_dispersion, stoch_samples)
-
-      kl_terms = [
-        tf.reduce_mean(tf.reduce_sum(kl_normal_normal(dropout[0], dropout[1], shared_dropout, 1), axis=1)),
-        tf.reduce_mean(tf.reduce_sum(kl_normal_normal(mean[0], mean[1], shared_mean, 1), axis=1)),
-        tf.reduce_mean(tf.reduce_sum(kl_normal_normal(dispersion[0], dispersion[1], shared_dispersion), axis=1)),
-      ]
-
-      dropout = sigmoid(sample_gaussian(*dropout, stoch_samples))
-      mean = biased_softplus(sample_gaussian(*mean, stoch_samples))
-      dispersion = biased_softplus(sample_gaussian(*dispersion, stoch_samples))
-      error = zinb_llik(y, dropout,
-                        tf.matmul(mean, onehot, transpose_b=True),
-                        tf.matmul(dispersion, onehot, transpose_b=True))
-      error = tf.reduce_mean(tf.reduce_sum(error, axis=[1, 2]), axis=0)
-
-      return sgvb(error, kl_terms, opt, feed_dict={y: counts}, **kwargs)
-
-    def fit_data(counts):
-      individuals = [k.split('.')[0] for k in counts.columns.values]
-      keys = sorted(set(individuals))
-      mapping = [keys.index(i) for i in ind]
       with tf.Graph().as_default():
-        onehot = tf.one_hot(mapping, len(keys))
-        return model0(counts, onehot)
+        shared_dropout = ed.models.Normal(tf.constant(0.), scale=tf.constant(1.))
+        dropout = ed.models.Normal(loc=tf.fill([n, p], shared_dropout),
+                                   scale=tf.constant(1.))
+        shared_mean = ed.models.Normal(tf.constant(0.), tf.constant(1.))
+        mean = ed.models.Normal(loc=tf.fill([m, p], shared_mean), scale=tf.constant(1.))
+        shared_dispersion = ed.models.Normal(tf.constant(0.), tf.constant(1.))
+        dispersion = ed.models.Normal(loc=tf.fill([m, p], shared_mean), scale=tf.constant(1.))
+        y = ZINB(dropout=dropout,
+                 mean=tf.matmul(onehot, mean),
+                 dispersion=tf.matmul(onehot, dispersion))
 
-  #+END_SRC
+        q_shared_dropout = ed.models.Normal(tf.Variable(tf.zeros([1])), tf.Variable(tf.zeros([1])))
+        q_shared_mean = ed.models.Normal(tf.Variable(tf.zeros([1])), tf.Variable(tf.zeros([1])))
+        q_shared_dispersion = ed.models.Normal(tf.Variable(tf.zeros([1])), tf.Variable(tf.zeros([1])))
+        q_dropout = ed.models.Normal(tf.Variable(tf.zeros([n, p])), tf.Variable(tf.zeros([n, p])))
+        q_mean = ed.models.Normal(tf.Variable(tf.zeros([m, p])), tf.Variable(tf.zeros([m, p])))
+        q_dispersion = ed.models.Normal(tf.Variable(tf.zeros([m, p])), tf.Variable(tf.zeros([m, p])))
 
-  #+BEGIN_SRC ipython :results output
-    fit_data(counts)
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  09b851ec-f8d0-4846-b7d8-63c08c02f064
-  :END:
-
-* Spike-and-slab version                                           :noexport:
-
-  #+BEGIN_SRC ipython
-def kl_normal_normal(mean_a, prec_a, mean_b, prec_b):
-  """Rasmussen & Williams Eq. A23"""
-  return tf.reduce_sum(.5 * (1 - tf.log(prec_b) + tf.log(prec_a) + prec_b * (T.sqr(mean_a - mean_b) + 1 / prec_a)), axis=-1)
-
-def kl_bernoulli_bernoulli(p_a, p_b):
-  """Rasmussen & Williams Eq. A22"""
-  return tf.sum(p_a * tf.log(p_a / p_b) + (1 - p_a) * tf.log((1 - p_a) / (1 - p_b)))
-
-def model(n, p, k):
-  """Build the model
-
-  Y_ik ~ ZINB(\sum_j X_ij \theta_j, \sum_j X_ij \phi_j, \pi_k)
-  \theta_j ~ SSB(\pi_\theta, \tau_\theta^-1)
-  \phi_j ~ SSB(\pi_\phi, \tau_\phi^-1)
-  logit(\pi_k) ~ N(-\log(p), 1)
-
-  Y - digital gene expression
-  X - genotype (centered)
-  \theta - mean effect
-  \phi - inverse variance effect
-  \pi - dropout
-  \pi_{\theta,\phi} - sparsity
-  \tau_{\theta,\phi} - effect size precision
-  i - individual
-  j - covariate (SNP/confounder)
-  k - gene
-
-  """
-  x_ph = tf.placeholder(tf.float32)
-  y_ph = tf.placeholder(tf.float32)
-
-  with tf.variable_scope('q', initializer=tf.zeros_initializer):
-    with tf.variable_scope('spikeslab'):
-      q_logodds_mean = tf.get_variable('logodds_mean', initializer=tf.constant([-10.]))
-      q_logodds_log_prec = tf.get_variable('logodds_log_prec', shape=[1])
-      q_logodds_prec = 1e-6 + tf.nn.softplus(q_logodds_log_prec)
-      # In [685]: np.log(np.finfo('float32').resolution)
-      # Out[693]: -13.815511
-      pi = tf.nn.sigmoid(tf.clip_by_value(q_logodds_mean, -13, 13))
-
-      q_scale_mean = tf.get_variable('q_scale_mean', shape=[1])
-      q_scale_log_prec = tf.get_variable('q_scale_log_prec', shape=[1])
-      q_scale_prec = 1e-6 + tf.nn.softplus(q_scale_log_prec)
-      tau = tf.nn.softplus(q_scale_mean)
-
-      q_logit_z = tf.get_variable('q_logit_z', shape=[p, 1])
-      q_z = tf.nn.sigmoid(tf.clip_by_value(q_logit_z, -13, 13))
-
-      q_theta_mean = tf.get_variable('q_theta_mean', shape=[p, 1])
-      q_theta_log_prec = tf.get_variable('q_theta_log_prec', shape=[p, 1])
-      q_theta_prec = 1e-6 + tf.nn.softplus(q_theta_log_prec)
-
-  theta_posterior_mean = q_z * q_theta_mean
-  theta_posterior_var = q_z / q_theta_prec + q_z * (1 - q_z) * tf.square(q_theta_mean)
-  eta_mean = tf.matmul(x_ph, theta_posterior_mean)
-  eta_std = tf.sqrt(tf.matmul(tf.square(x_ph), theta_posterior_var))
-
-  noise = tf.random_normal([50, 2])
-  eta = eta_mean + noise[:,0] * eta_std
-  phi = tf.nn.softplus(q_log_prec_mean + noise[:,1] * q_log_prec_std)
-
-  llik = -.5 * tf.reduce_mean(tf.reduce_sum(-tf.log(phi) + tf.square(y_ph - eta) * phi, axis=0))
-  kl_z = tf.reduce_sum(q_z * tf.log(q_z / pi) + (1 - q_z) * tf.log((1 - q_z) / (1 - pi)))
-  kl_theta = tf.reduce_sum(q_z * .5 * (1 - tf.log(tau) + tf.log(q_theta_prec) + tau * (tf.square(q_theta_mean) + 1 / q_theta_prec)))
-  kl_logodds = .5 * tf.reduce_sum(1 + tf.log(q_logodds_prec) + (tf.square(q_logodds_mean) + 1 / q_logodds_prec))
-  kl_scale = .5 * tf.reduce_sum(1 + tf.log(q_scale_prec) + (tf.square(q_scale_mean) + 1 / q_scale_prec))
-  kl_log_prec = .5 * tf.reduce_sum(1 + tf.log(q_log_prec_prec) + (tf.square(q_log_prec_mean) + 1 / q_log_prec_prec))
-  elbo = llik - kl_z - kl_theta - kl_logodds - kl_scale - kl_log_prec
-
-  optimizer = tf.train.RMSPropOptimizer(learning_rate=1e-2)
-  train = optimizer.minimize(-elbo)
-
-  # GLM coefficient of determination
-  R = 1 - tf.reduce_sum(tf.square(y_ph - eta_mean)) / tf.reduce_sum(tf.square(y_ph - tf.reduce_mean(y_ph)))
-
-  opt = [
-    q_z,
-    theta_posterior_mean,
-    pi,
-    tau,
-  ]
-
-  return train, elbo, opt
-
+        # IMPORTANT: we have to explicitly make sure Edward does not use analytical
+        # KL because it does not DTRT
+        inf = ed.ReparameterizationKLqp(
+          latent_vars={
+            shared_dropout: q_shared_dropout,
+            shared_mean: q_shared_mean,
+            shared_dispersion: q_shared_dispersion,
+            dropout: q_dropout,
+            mean: q_mean,
+            dispersion: q_dispersion,
+          },
+          data={y: counts})
+        inf.run(n_samples=10)
+        return ed.copy([q_dropout, q_mean, q_dispersion])
   #+END_SRC
