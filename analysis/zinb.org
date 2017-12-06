@@ -4,7 +4,7 @@
 * Introduction
 
   Here, we estimate means, variances, and dropout rates of the single cell data
-  using a hierarchical zero-inflated negative binomial model.
+  using a hierarchical zero-inflated negative binomial (ZINB) model.
 
   The basic idea is that after fitting the model, we will recover an
   individual-by-gene mean matrix and individual-by-gene dispersion matrix. We
@@ -54,10 +54,10 @@
     onehot = 
   #+END_SRC
 
-* ZINB model
+* Model specification and inference
 
-  Hiding the technical details of the model implementation, we specify the
-  model in [[http://edwardlib.org/][Edward]]:
+  We implement ZINB in [[http://edwardlib.org/][Edward]] (not shown). This allows us to succinctly
+  describe the model below:
 
   #+NAME: zinb-def
   #+BEGIN_SRC ipython :exports none
@@ -73,8 +73,8 @@
         parameters = locals()
         with tf.name_scope(name, values=[dropout, mean, dispersion]):
           self._dropout = tf.identity(dropout, name="dropout")
-          self._mean = tf.identity(mean, name="mean")
-          self._dispersion = tf.identity(dispersion, name="dispersion")
+          self._mean = tf.exp(tf.identity(mean, name="mean"))
+          self._dispersion = tf.exp(tf.identity(dispersion, name="dispersion"))
         super(_ZINB, self).__init__(
             allow_nan_stats=allow_nan_stats,
             dtype=self._mean.dtype,
@@ -141,14 +141,18 @@
              dispersion=tf.matmul(onehot, dispersion))
   #+END_SRC
 
-  #+BEGIN_SRC ipython :exports none
+  We fit the model using variational inference.
+
+  #+BEGIN_SRC ipython
     q_shared_dropout = ed.models.Normal(tf.Variable(tf.zeros([1])), tf.Variable(tf.zeros([1])))
     q_shared_mean = ed.models.Normal(tf.Variable(tf.zeros([1])), tf.Variable(tf.zeros([1])))
     q_shared_dispersion = ed.models.Normal(tf.Variable(tf.zeros([1])), tf.Variable(tf.zeros([1])))
     q_dropout = ed.models.Normal(tf.Variable(tf.zeros([n, p])), tf.Variable(tf.zeros([n, p])))
     q_mean = ed.models.Normal(tf.Variable(tf.zeros([m, p])), tf.Variable(tf.zeros([m, p])))
     q_dispersion = ed.models.Normal(tf.Variable(tf.zeros([m, p])), tf.Variable(tf.zeros([m, p])))
+  #+END_SRC
 
+  #+BEGIN_SRC ipython :async t
     # IMPORTANT: we have to explicitly make sure Edward does not use analytical
     # KL because it does not DTRT
     inf = ed.ReparameterizationKLqp(

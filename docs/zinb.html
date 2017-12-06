@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2017-12-05 Tue 23:46 -->
+<!-- 2017-12-06 Wed 00:18 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ZINB estimation</title>
@@ -236,7 +236,7 @@ for the JavaScript code in this tag.
 <div id="text-table-of-contents">
 <ul>
 <li><a href="#org374a8fe">Introduction</a></li>
-<li><a href="#org65ca5f1">ZINB model</a></li>
+<li><a href="#org18a6830">Model specification and inference</a></li>
 </ul>
 </div>
 </div>
@@ -246,7 +246,7 @@ for the JavaScript code in this tag.
 <div class="outline-text-2" id="text-org374a8fe">
 <p>
 Here, we estimate means, variances, and dropout rates of the single cell data
-using a hierarchical zero-inflated negative binomial model.
+using a hierarchical zero-inflated negative binomial (ZINB) model.
 </p>
 
 <p>
@@ -258,12 +258,12 @@ existing QTL mapping software.
 </div>
 </div>
 
-<div id="outline-container-org65ca5f1" class="outline-2">
-<h2 id="org65ca5f1">ZINB model</h2>
-<div class="outline-text-2" id="text-org65ca5f1">
+<div id="outline-container-org18a6830" class="outline-2">
+<h2 id="org18a6830">Model specification and inference</h2>
+<div class="outline-text-2" id="text-org18a6830">
 <p>
-Hiding the technical details of the model implementation, we specify the
-model in <a href="http://edwardlib.org/">Edward</a>:
+We implement ZINB in <a href="http://edwardlib.org/">Edward</a> (not shown). This allows us to succinctly
+describe the model below:
 </p>
 
 <div class="org-src-container">
@@ -281,12 +281,43 @@ model in <a href="http://edwardlib.org/">Edward</a>:
          dispersion=tf.matmul(onehot, dispersion))
 </pre>
 </div>
+
+<p>
+We fit the model using variational inference.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">q_shared_dropout</span> = ed.models.Normal(tf.Variable(tf.zeros([1])), tf.Variable(tf.zeros([1])))
+<span class="org-variable-name">q_shared_mean</span> = ed.models.Normal(tf.Variable(tf.zeros([1])), tf.Variable(tf.zeros([1])))
+<span class="org-variable-name">q_shared_dispersion</span> = ed.models.Normal(tf.Variable(tf.zeros([1])), tf.Variable(tf.zeros([1])))
+<span class="org-variable-name">q_dropout</span> = ed.models.Normal(tf.Variable(tf.zeros([n, p])), tf.Variable(tf.zeros([n, p])))
+<span class="org-variable-name">q_mean</span> = ed.models.Normal(tf.Variable(tf.zeros([m, p])), tf.Variable(tf.zeros([m, p])))
+<span class="org-variable-name">q_dispersion</span> = ed.models.Normal(tf.Variable(tf.zeros([m, p])), tf.Variable(tf.zeros([m, p])))
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-comment-delimiter"># </span><span class="org-comment">IMPORTANT: we have to explicitly make sure Edward does not use analytical</span>
+<span class="org-comment-delimiter"># </span><span class="org-comment">KL because it does not DTRT</span>
+<span class="org-variable-name">inf</span> = ed.ReparameterizationKLqp(
+  latent_vars={
+    shared_dropout: q_shared_dropout,
+    shared_mean: q_shared_mean,
+    shared_dispersion: q_shared_dispersion,
+    dropout: q_dropout,
+    mean: q_mean,
+    dispersion: q_dispersion,
+  },
+  data={y: counts})
+inf.run(n_samples=10)
+</pre>
+</div>
 </div>
 </div>
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2017-12-05 Tue 23:46</p>
+<p class="date">Created: 2017-12-06 Wed 00:18</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>
