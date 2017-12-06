@@ -15,8 +15,12 @@
 
   #+BEGIN_SRC emacs-lisp
     (org-babel-lob-ingest "/home/aksarkar/projects/singlecell-qtl/analysis/sc-vs-bulk.org")
+    (org-babel-lob-ingest "/home/aksarkar/projects/singlecell-qtl/analysis/qtl-mapping.org")
     (org-babel-lob-ingest "/home/aksarkar/.emacs.d/org-templates/library.org")
   #+END_SRC
+
+  #+RESULTS:
+  : 1
 
   This has to be run on the ~gpu2~ partition since it depends on ~libcuda.so~
 
@@ -32,16 +36,23 @@
     import numpy as np
     import pandas as pd
     import tensorflow as tf
-    import tensorflow.contrib.distributions as ds
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
   :END:
 
+* Read the data                                                    :noexport:
+
   #+CALL: load-data-defs()
 
   #+CALL: load-data()
+
+  #+CALL: umi-qc()
+
+  #+BEGIN_SRC ipython
+    onehot = 
+  #+END_SRC
 
 * ZINB model
 
@@ -116,60 +127,39 @@
   #+END_SRC
 
   #+BEGIN_SRC ipython
-    def model0(counts, onehot):
-      """Return approximate posterior means of dropout, mean, dispersion
+    p, n = umi.shape
+    _, m = onehot.shape
 
-      counts ~ ZINB(dropout, mean, dispersion)
+    shared_dropout = ed.models.Normal(tf.constant(0.), scale=tf.constant(1.))
+    dropout = ed.models.Normal(loc=tf.fill([n, p], shared_dropout), scale=tf.constant(1.))
+    shared_mean = ed.models.Normal(tf.constant(0.), tf.constant(1.))
+    mean = ed.models.Normal(loc=tf.fill([m, p], shared_mean), scale=tf.constant(1.))
+    shared_dispersion = ed.models.Normal(tf.constant(0.), tf.constant(1.))
+    dispersion = ed.models.Normal(loc=tf.fill([m, p], shared_mean), scale=tf.constant(1.))
+    y = ZINB(dropout=dropout,
+             mean=tf.matmul(onehot, mean),
+             dispersion=tf.matmul(onehot, dispersion))
+  #+END_SRC
 
-      p genes, n cells, m individuals
+  #+BEGIN_SRC ipython :exports none
+    q_shared_dropout = ed.models.Normal(tf.Variable(tf.zeros([1])), tf.Variable(tf.zeros([1])))
+    q_shared_mean = ed.models.Normal(tf.Variable(tf.zeros([1])), tf.Variable(tf.zeros([1])))
+    q_shared_dispersion = ed.models.Normal(tf.Variable(tf.zeros([1])), tf.Variable(tf.zeros([1])))
+    q_dropout = ed.models.Normal(tf.Variable(tf.zeros([n, p])), tf.Variable(tf.zeros([n, p])))
+    q_mean = ed.models.Normal(tf.Variable(tf.zeros([m, p])), tf.Variable(tf.zeros([m, p])))
+    q_dispersion = ed.models.Normal(tf.Variable(tf.zeros([m, p])), tf.Variable(tf.zeros([m, p])))
 
-      Parameters:
-        counts - UMI count matrix (n, p)
-        onehot - Mapping from cells to individuals (n, m)
-
-      Returns: 
-        dropout_mean - posterior of mean dropout log odds (n, p)
-        dropout_var - posterior variance of dropout log odds (n, p)
-        mean_mean - posterior mean of mean expression (m, p)
-        mean_var - posterior variance of mean expression (m, p)
-        dispersion_mean - posterior mean of dispersion (m, p)
-        dispersion_var - posterior variance of dispersion (m, p)
-
-      """
-      p, n = counts.shape
-      _, m = onehot.shape
-
-      with tf.Graph().as_default():
-        shared_dropout = ed.models.Normal(tf.constant(0.), scale=tf.constant(1.))
-        dropout = ed.models.Normal(loc=tf.fill([n, p], shared_dropout),
-                                   scale=tf.constant(1.))
-        shared_mean = ed.models.Normal(tf.constant(0.), tf.constant(1.))
-        mean = ed.models.Normal(loc=tf.fill([m, p], shared_mean), scale=tf.constant(1.))
-        shared_dispersion = ed.models.Normal(tf.constant(0.), tf.constant(1.))
-        dispersion = ed.models.Normal(loc=tf.fill([m, p], shared_mean), scale=tf.constant(1.))
-        y = ZINB(dropout=dropout,
-                 mean=tf.matmul(onehot, mean),
-                 dispersion=tf.matmul(onehot, dispersion))
-
-        q_shared_dropout = ed.models.Normal(tf.Variable(tf.zeros([1])), tf.Variable(tf.zeros([1])))
-        q_shared_mean = ed.models.Normal(tf.Variable(tf.zeros([1])), tf.Variable(tf.zeros([1])))
-        q_shared_dispersion = ed.models.Normal(tf.Variable(tf.zeros([1])), tf.Variable(tf.zeros([1])))
-        q_dropout = ed.models.Normal(tf.Variable(tf.zeros([n, p])), tf.Variable(tf.zeros([n, p])))
-        q_mean = ed.models.Normal(tf.Variable(tf.zeros([m, p])), tf.Variable(tf.zeros([m, p])))
-        q_dispersion = ed.models.Normal(tf.Variable(tf.zeros([m, p])), tf.Variable(tf.zeros([m, p])))
-
-        # IMPORTANT: we have to explicitly make sure Edward does not use analytical
-        # KL because it does not DTRT
-        inf = ed.ReparameterizationKLqp(
-          latent_vars={
-            shared_dropout: q_shared_dropout,
-            shared_mean: q_shared_mean,
-            shared_dispersion: q_shared_dispersion,
-            dropout: q_dropout,
-            mean: q_mean,
-            dispersion: q_dispersion,
-          },
-          data={y: counts})
-        inf.run(n_samples=10)
-        return ed.copy([q_dropout, q_mean, q_dispersion])
+    # IMPORTANT: we have to explicitly make sure Edward does not use analytical
+    # KL because it does not DTRT
+    inf = ed.ReparameterizationKLqp(
+      latent_vars={
+        shared_dropout: q_shared_dropout,
+        shared_mean: q_shared_mean,
+        shared_dispersion: q_shared_dispersion,
+        dropout: q_dropout,
+        mean: q_mean,
+        dispersion: q_dispersion,
+      },
+      data={y: counts})
+    inf.run(n_samples=10)
   #+END_SRC

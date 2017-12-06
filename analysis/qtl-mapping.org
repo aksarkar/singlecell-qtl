@@ -62,6 +62,7 @@
   Filter out cells on percent spike-in and gene detection rate, and filter out
   genes on individual detection rate.
 
+  #+NAME: umi-qc
   #+BEGIN_SRC ipython
     keep_cells = functools.reduce(
       np.logical_and,
