@@ -124,18 +124,24 @@
         if 'value' not in kwargs:
             kwargs['value'] = tf.zeros_like(mean)
         RandomVariable.__init__(self, *args, **kwargs)
+
+    LogNormal = ds.TransformedDistribution(
+      distribution=ds.Normal(loc=0., scale=1.),
+      bijector=ds.bijectors.Exp(),
+      name='LogNormal')
   #+END_SRC
 
   #+BEGIN_SRC ipython
+    Normal = ed.models.Normal
     p, n = umi.shape
     _, m = onehot.shape
 
-    shared_dropout = ed.models.Normal(tf.constant(0.), scale=tf.constant(1.))
-    dropout = ed.models.Normal(loc=tf.fill([n, p], shared_dropout), scale=tf.constant(1.))
-    shared_mean = ed.models.Normal(tf.constant(0.), tf.constant(1.))
-    mean = ed.models.Normal(loc=tf.fill([m, p], shared_mean), scale=tf.constant(1.))
-    shared_dispersion = ed.models.Normal(tf.constant(0.), tf.constant(1.))
-    dispersion = ed.models.Normal(loc=tf.fill([m, p], shared_mean), scale=tf.constant(1.))
+    shared_dropout = Normal(tf.constant(0.), scale=tf.constant(1.))
+    dropout = Normal(loc=tf.fill([n, p], shared_dropout), scale=tf.constant(1.))
+    shared_mean = Normal(tf.constant(0.), tf.constant(1.))
+    mean = LogNormal(loc=tf.fill([m, p], shared_mean), scale=tf.constant(1.))
+    shared_dispersion = Normal(tf.constant(0.), tf.constant(1.))
+    dispersion = LogNormal(loc=tf.fill([m, p], shared_mean), scale=tf.constant(1.))
     y = ZINB(dropout=dropout,
              mean=tf.matmul(onehot, mean),
              dispersion=tf.matmul(onehot, dispersion))
