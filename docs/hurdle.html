@@ -1,10 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2017-12-06 Wed 15:35 -->
+<!-- 2017-12-08 Fri 15:10 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>voom estimation</title>
+<title>Hurdle model estimation</title>
 <meta name="generator" content="Org mode">
 <meta name="author" content="Abhishek Sarkar">
 <style type="text/css">
@@ -252,7 +252,7 @@ for the JavaScript code in this tag.
 </head>
 <body>
 <div id="content">
-<h1 class="title">voom estimation</h1>
+<h1 class="title">Hurdle model estimation</h1>
 <div id="table-of-contents">
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents">
@@ -268,15 +268,29 @@ for the JavaScript code in this tag.
 <h2 id="org90e90c4">Introduction</h2>
 <div class="outline-text-2" id="text-org90e90c4">
 <p>
-The key idea of <a href="http://genomebiology.com/2014/15/2/R29">Law et al 2014</a> is that the distribution of \(Y =
+The key idea of <code>voom</code> (<a href="http://genomebiology.com/2014/15/2/R29">Law et al 2014</a>) is that the distribution of \(Y =
   \log_2(\mathrm{CPM} + 1)\) is approximately Gaussian. For simplicity,
-consider one gene in one individual.
+consider one gene in one cell.
 </p>
 
 <p>
 \[ R = \mbox{number of reads} \]
+</p>
+
+<p>
+Assuming \(R\) follows the NB2 negative binomial model (Hilbe 2012):
+</p>
+
+<p>
 \[ E[R] = \lambda \]
 \[ V[R] = \lambda + \phi \lambda^2 \]
+</p>
+
+<p>
+By the definition of CPM:
+</p>
+
+<p>
 \[ Y = \log_2(R) + \mathrm{const} \]
 </p>
 
@@ -285,7 +299,7 @@ By first order Taylor expansion:
 </p>
 
 <p>
-\[ E[Y] = \mu \approx \log_2 \lambda \]
+\[ E[Y] = \mu \approx \log_2 \lambda + \mathrm{const} \]
 </p>
 
 <p>
@@ -297,35 +311,53 @@ By the delta method:
 </p>
 
 <p>
+The key idea of <code>mast</code> (<a href="https://dx.doi.org/10.1186/s13059-015-0844-5">Finak et al 2015</a>) is to model non-zero \(R\) using a
+Gaussian distribution, and model zero \(R\) using logistic regression. The
+key distinction between this approach and the <a href="zinb.html">zero-inflated negative binomial
+model</a> is that zeroes are assumed to arise from only one process.
+</p>
+
+<p>
+This naturally suggests a Bayesian model which simultaneously calls mean and
+variance QTLs based on the likelihood:
+</p>
+
+<p>
+\[ Y \sim N(AX\theta_m, \exp(-AX\theta_m) + AX\theta_v) \]
+</p>
+
+<p>
+where \(A\) maps from cells to individuals, and \(X\) is the genotype matrix.
+</p>
+
+<p>
+Fitting this model will require writing new software as opposed to
+plugging into <code>QTLtools</code>. 
+</p>
+
+<p>
 The key issues are:
 </p>
 
 <ol class="org-ol">
-<li><b>This approach does not explicitly account for dropout.</b> This might be OK,
-because both dropout and dispersion depend on mean expression. However, it
-might be the case that there is an additional dependency between dropout
-and dispersion which this approach would not account for.</li>
-
 <li><p>
-<b>Should we use the sample mean in the dispersion model?</b> This is simplest
-if we are confident that the sample mean can be reliably estimated from
-the data (this might not be true with dropout).
+<b>Do we need to actually fit the dropout model?</b> <code>mast</code> conditions on the
+observed \(Y = 0\), not on a latent \(Z = 0\), which means we could simply
+do the same and ignore zeros.
 </p>
 
 <p>
-In <code>voom</code>, Law et al fit a non-parametric model \(\sqrt\sigma = g(\mu)\)
-because in their application the sample mean could not be reliably
-estimated from the data (too few replicates).
-</p>
-
-<p>
-This is related to issue (3).
+Related, this property suggests that mean/variance QTL effect size
+estimation will be less robust for genes with high dropout compared to
+ZINB. This might not be a problem depending on the stringency of gene
+filtering.
 </p></li>
 
 <li><p>
-<b>Do we need to worry about mean QTLs in LD with variance QTLs?</b> We
-previously <a href="https://github.com/YPARK/fqtl">built multivariate mean/variance QTL models</a> which could account
-for LD, and could share information between the mean and variance models.
+<b>For a single gene, do we need to worry about mean QTLs in LD with
+variance QTLs?</b> We previously <a href="https://github.com/YPARK/fqtl">built multivariate mean/variance QTL models</a>
+which could account for LD, and could share information between the mean
+and variance models.
 </p>
 
 <p>
@@ -341,28 +373,11 @@ the same genotypes if we use second-order Taylor expansion:
 
 <p>
 \[ \mu \approx \log_2 \lambda + \frac{V[R]}{2 \lambda^2} \]
-</p>
-
-<p>
-Our idea was to build a Bayesian model which simultaneously calls mean and
-variance QTLs based on the likelihood:
-</p>
-
-<p>
-\[ Y \sim N(X\beta, \exp(-X\beta) + X\gamma) \]
-</p>
-
-<p>
-Fitting this model will require writing new software as opposed to
-plugging into <code>QTLtools</code>. 
-</p>
-
-<p>
-One simple approach to get around this would be to fit multivariate mean
-models (using a standard package) and either plug in predicted mean
-expression in place of the empirical mean, or regress out the mean from
-the estimated variance.
 </p></li>
+
+<li><b>Do we need to share parameters between genes?</b> <code>mast</code> assumes genes are
+conditionally independent. But this is no longer true when nearby genes
+can be driven by overlapping (or correlated) <i>cis</i>-genotypes.</li>
 </ol>
 </div>
 </div>
@@ -372,7 +387,7 @@ the estimated variance.
 <div class="outline-text-2" id="text-orge871fab">
 <p>
 Estimate the mean count per individual, per gene using non-zero counts only,
-then transform to \(log_2(\mathrm{CPM} + 1)\). 
+then transform to \(\log_2(\mathrm{CPM} + 1)\). 
 </p>
 
 <p>
@@ -406,7 +421,7 @@ expression as a true zero.
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2017-12-06 Wed 15:35</p>
+<p class="date">Created: 2017-12-08 Fri 15:10</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>

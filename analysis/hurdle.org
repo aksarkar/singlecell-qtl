@@ -1,0 +1,163 @@
+#+TITLE: Hurdle model estimation
+#+SETUPFILE: setup.org
+
+* Introduction
+
+  The key idea of ~voom~ ([[http://genomebiology.com/2014/15/2/R29][Law et al 2014]]) is that the distribution of \(Y =
+  \log_2(\mathrm{CPM} + 1)\) is approximately Gaussian. For simplicity,
+  consider one gene in one cell.
+
+  \[ R = \mbox{number of reads} \]
+
+  Assuming \(R\) follows the NB2 negative binomial model (Hilbe 2012):
+
+  \[ E[R] = \lambda \]
+  \[ V[R] = \lambda + \phi \lambda^2 \]
+
+  By the definition of CPM:
+
+  \[ Y = \log_2(R) + \mathrm{const} \]
+
+  By first order Taylor expansion:
+
+  \[ E[Y] = \mu \approx \log_2 \lambda + \mathrm{const} \]
+
+  By the delta method:
+
+  \[ V[Y] = \sigma^2 \approx V[R] / \lambda^2 = 1/\lambda + \phi \]
+
+  The key idea of ~mast~ ([[https://dx.doi.org/10.1186/s13059-015-0844-5][Finak et al 2015]]) is to model non-zero \(R\) using a
+  Gaussian distribution, and model zero \(R\) using logistic regression. The
+  key distinction between this approach and the [[file:zinb.org][zero-inflated negative binomial
+  model]] is that zeroes are assumed to arise from only one process.
+
+  This naturally suggests a Bayesian model which simultaneously calls mean and
+  variance QTLs based on the likelihood:
+
+  \[ Y \sim N(AX\theta_m, \exp(-AX\theta_m) + AX\theta_v) \]
+
+  where \(A\) maps from cells to individuals, and \(X\) is the genotype matrix.
+
+  Fitting this model will require writing new software as opposed to plugging
+  into ~QTLtools~. We previously built an efficient algorithm and inference
+  engine to build these kind of models, but it has one major issue: it is
+  computationally expensive to perform statistical tests on the fitted models
+  because the approximate Bayesian inferences underestimate the uncertainty in
+  the estimated values.
+
+  The key issues are:
+
+  1. *Do we need to actually fit the dropout model?* ~mast~ conditions on the
+     observed \(Y = 0\), not on a latent \(Z = 0\), which means we could simply
+     do the same and ignore zeros.
+
+     Related, this property suggests that mean/variance QTL effect size
+     estimation will be less robust for genes with high dropout compared to
+     ZINB. This might not be a problem depending on the stringency of gene
+     filtering.
+
+  2. *For a single gene, do we need to worry about mean QTLs in LD with
+     variance QTLs?* We previously [[https://github.com/YPARK/fqtl][built multivariate mean/variance QTL models]]
+     which could account for LD, and could share information between the mean
+     and variance models.
+
+     The fundamental problem is that if we assume that the mean and dispersion
+     both have genetic components, then the mean is no longer independent of
+     the dispersion.
+
+     This actually could be derived without using the fact that both depend on
+     the same genotypes if we use second-order Taylor expansion:
+
+     \[ \mu \approx \log_2 \lambda + \frac{V[R]}{2 \lambda^2} \]
+
+  3. *Do we need to share parameters between genes?* ~mast~ assumes genes are
+     conditionally independent. But this is no longer true when nearby genes
+     can be driven by overlapping (or correlated) /cis/-genotypes.
+
+* Setup                                                            :noexport:
+
+  #+BEGIN_SRC emacs-lisp
+    (org-babel-lob-ingest "/home/aksarkar/projects/singlecell-qtl/analysis/sc-vs-bulk.org")
+    (org-babel-lob-ingest "/home/aksarkar/projects/singlecell-qtl/analysis/qtl-mapping.org")
+    (org-babel-lob-ingest "/home/aksarkar/.emacs.d/org-templates/library.org")
+  #+END_SRC
+
+  #+RESULTS:
+  : 1
+
+  #+CALL: ipython3(memory="16G", venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
+
+  #+RESULTS:
+  : Submitted batch job 40997661
+
+  #+BEGIN_SRC ipython
+    import functools
+    import os.path
+    import numpy as np
+    import pandas as pd
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+CALL: concordance-def()
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+CALL: load-data-defs()
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+CALL: load-data()
+
+  #+RESULTS:
+  :RESULTS:
+  : ((20327, 2261), (34608, 15))
+  :END:
+
+  #+CALL: umi-qc()
+
+  #+RESULTS:
+  :RESULTS:
+  : (15636, 1861)
+  :END:
+
+* Mean phenotype definition
+
+  Estimate the mean count per individual, per gene using non-zero counts only,
+  then transform to \(\log_2(\mathrm{CPM} + 1)\). 
+
+  We still have to deal with the case where a gene is not detected in any cells
+  in a particular individual. As a first pass, simply treat their mean
+  expression as a true zero.
+
+  #+BEGIN_SRC ipython
+    vcf = (pd.read_table('/project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz', nrows=1)
+           .rename(columns=lambda x: 'NA{}'.format(x) if x.startswith('1') else x))
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+BEGIN_SRC ipython
+    mean = cpm(umi_qc.mask(umi_qc == 0)
+               .groupby(annotations_qc['chip_id'].values, axis=1)
+               .agg(np.mean)
+               .filter(items=vcf.columns)
+               .rename(columns=lambda x: x[2:])  # match original VCF
+               .fillna(0),
+               log2=True)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+* Variance phenotype definition
+

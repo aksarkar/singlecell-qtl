@@ -88,38 +88,9 @@
 
 * Mean-QTL calling
 
-  Estimate the mean count per individual, per gene using non-zero counts only,
-  then transform to \(log_2(CPM + 1)\). 
-
-  We still have to deal with the case where a gene is not detected in any cells
-  in a particular individual. As a first pass, simply treat their mean
-  expression as a true zero.
-
-  #+BEGIN_SRC ipython
-    vcf = (pd.read_table('/project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz', nrows=1)
-           .rename(columns=lambda x: 'NA{}'.format(x) if x.startswith('1') else x))
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  :END:
-
-  #+BEGIN_SRC ipython
-    mean = cpm(umi_qc.mask(umi_qc == 0)
-               .groupby(annotations_qc['chip_id'].values, axis=1)
-               .agg(np.mean)
-               .filter(items=vcf.columns)
-               .rename(columns=lambda x: x[2:])  # match original VCF
-               .fillna(0),
-               log2=True)
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  :END:
-
   Write out the [[https://qtltools.github.io/qtltools/pages/input_files.html][phenotype file]] for ~QTLtools~.
 
+  #+NAME: get-gene-info
   #+BEGIN_SRC ipython
     gene_info = (pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/scqtl-genes.txt.gz')
                  .set_index('gene')
@@ -143,6 +114,7 @@
   #+END_EXAMPLE
   :END:
 
+  #+NAME: write-pheno-def
   #+BEGIN_SRC ipython
     def qtltools_format(row):
       row['#Chr'] = 'chr{}'.format(row['chr'][2:])
@@ -168,11 +140,13 @@
 
   Index the phenotype file.
 
-  #+BEGIN_SRC sh :dir /scratch/midway2/aksarkar/singlecell
-    sbatch --partition=mstephens
+  #+NAME: tabix
+  #+BEGIN_SRC sh :var input="mean.bed" :dir /scratch/midway2/aksarkar/singlecell
+    export $input
+    sbatch --partition=mstephens --wait
     #!/bin/bash
-    sort -k1,1 -k2,2n -k3,3n mean.bed | bgzip >mean.bed.gz
-    tabix -p bed mean.bed.gz
+    sort -k1,1 -k2,2n -k3,3n $input | bgzip >$input.gz
+    tabix -p bed $input.gz
   #+END_SRC
 
   #+RESULTS:
@@ -180,10 +154,12 @@
 
   Run the QTL mapping.
 
-  #+BEGIN_SRC sh :dir /scratch/midway2/aksarkar/singlecell
-    sbatch --partition=mstephens -c4 -J mean-qtl -o mean-qtl.log
+  #+NAME: qtltools
+  #+BEGIN_SRC sh :var pheno="mean" :dir /scratch/midway2/aksarkar/singlecell
+    export $pheno
+    sbatch --partition=mstephens -c4 -J $pheno-qtl -o $pheno-qtl.log
     #!/bin/bash
-    parallel -j4 qtltools cis --vcf /project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz --bed mean.bed.gz --nominal=0.01 --chunk {#} 100 --out mean-qtl.{#}.txt ::: $(seq 1 100)
+    parallel -j4 qtltools cis --vcf /project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz --bed $pheno.bed.gz --nominal=0.01 --chunk {#} 100 --out $pheno-qtl.{#}.txt ::: $(seq 1 100)
   #+END_SRC
 
   Read the results.
@@ -259,16 +235,6 @@
   :END:
 
 * Variance-QTL calling
-
-  The fundamental relationship derived by [[http://genomebiology.com/2014/15/2/R29][Law et al 2014]] to transform to
-  Gaussian phenotypes is:
-
-  \[ \mathrm{variance} = \frac{1}{\mathrm{mean}} + \mathrm{dispersion} \]
-
-  *TODO:* Do we need to worry about mean QTLs in LD with variance QTLs? Can we
-  just plug in the mean? Should we use predictions from multivariate mean-QTL
-  models? Should we fit a Gaussian process regression (per individual, or
-  pooling all individuals)?
 
 * Next steps
    
