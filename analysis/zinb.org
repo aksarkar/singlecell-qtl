@@ -6,10 +6,16 @@
   Here, we estimate means, variances, and dropout rates of the single cell data
   using a hierarchical zero-inflated negative binomial (ZINB) model.
 
-  The basic idea is that after fitting the model, we will recover an
-  individual-by-gene mean matrix and individual-by-gene dispersion matrix. We
-  can use the columns of this matrix as continuous phenotypes to plug into
-  existing QTL mapping software.
+  The key issues are:
+
+  1. *This model does not use genotype information.* The basic idea is that
+     after fitting the model, we will recover an individual-by-gene mean matrix
+     and individual-by-gene dispersion matrix. We can use the columns of this
+     matrix as continuous phenotypes to plug into existing QTL mapping
+     software.
+
+     Related, this model does not use covariates (either measured or inferred)
+     to estimate any of the parameters.
 
 * Setup                                                            :noexport:
 
@@ -24,18 +30,20 @@
 
   This has to be run on the ~gpu2~ partition since it depends on ~libcuda.so~
 
-  #+CALL: ipython3(venv="scqtl", memory="8G", partition="gpu2")
+  #+CALL: ipython3(venv="scqtl", memory="32G", partition="gpu2")
 
   #+RESULTS:
-  : 1
+  : Submitted batch job 40967674
 
   #+BEGIN_SRC ipython
     %matplotlib inline
 
     import edward as ed
+    import functools
     import numpy as np
     import pandas as pd
     import tensorflow as tf
+    import tensorflow.contrib.distributions as ds
   #+END_SRC
 
   #+RESULTS:
@@ -46,13 +54,23 @@
 
   #+CALL: load-data-defs()
 
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
   #+CALL: load-data()
+
+  #+RESULTS:
+  :RESULTS:
+  : ((20327, 2261), (34608, 15))
+  :END:
 
   #+CALL: umi-qc()
 
-  #+BEGIN_SRC ipython
-    onehot = 
-  #+END_SRC
+  #+RESULTS:
+  :RESULTS:
+  : (15636, 1861)
+  :END:
 
 * Model specification and inference
 
@@ -123,40 +141,54 @@
             mean = args[1]
         if 'value' not in kwargs:
             kwargs['value'] = tf.zeros_like(mean)
-        RandomVariable.__init__(self, *args, **kwargs)
-
-    LogNormal = ds.TransformedDistribution(
-      distribution=ds.Normal(loc=0., scale=1.),
-      bijector=ds.bijectors.Exp(),
-      name='LogNormal')
+        ed.models.RandomVariable.__init__(self, *args, **kwargs)
   #+END_SRC
+
+  #+RESULTS: zinb-def
+  :RESULTS:
+  :END:
 
   #+BEGIN_SRC ipython
     Normal = ed.models.Normal
-    p, n = umi.shape
+    p, n = umi_qc.shape
     _, m = onehot.shape
 
-    shared_dropout = Normal(tf.constant(0.), scale=tf.constant(1.))
-    dropout = Normal(loc=tf.fill([n, p], shared_dropout), scale=tf.constant(1.))
-    shared_mean = Normal(tf.constant(0.), tf.constant(1.))
-    mean = LogNormal(loc=tf.fill([m, p], shared_mean), scale=tf.constant(1.))
-    shared_dispersion = Normal(tf.constant(0.), tf.constant(1.))
-    dispersion = LogNormal(loc=tf.fill([m, p], shared_mean), scale=tf.constant(1.))
+    shared_dropout = Normal(tf.zeros([1]), scale=tf.ones([1]))
+    shared_mean = Normal(tf.zeros([1]), scale=tf.ones([1]))
+    shared_dispersion = Normal(tf.zeros([1]), scale=tf.ones([1]))
+
+    gene_dropout = Normal(tf.ones([1, p]) * shared_dropout, scale=tf.ones([1, p]))
+    gene_mean = Normal(tf.ones([1, p]) * shared_mean, scale=tf.ones([1, p]))
+    gene_dispersion = Normal(tf.ones([1, p]) * shared_dispersion, scale=tf.ones([1, p]))
+
+    dropout = Normal(loc=tf.ones([n, 1]) * gene_dropout, scale=tf.constant(1.))
+    mean = Normal(loc=tf.ones([m, 1]) * gene_mean, scale=tf.constant(1.))
+    dispersion = Normal(loc=tf.ones([m, 1]) * gene_dispersion, scale=tf.constant(1.))
+
     y = ZINB(dropout=dropout,
-             mean=tf.matmul(onehot, mean),
-             dispersion=tf.matmul(onehot, dispersion))
+             mean=tf.exp(tf.matmul(onehot, mean)),
+             dispersion=tf.exp(tf.matmul(onehot, dispersion)))
   #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
 
   We fit the model using variational inference.
 
   #+BEGIN_SRC ipython
-    q_shared_dropout = ed.models.Normal(tf.Variable(tf.zeros([1])), tf.Variable(tf.zeros([1])))
-    q_shared_mean = ed.models.Normal(tf.Variable(tf.zeros([1])), tf.Variable(tf.zeros([1])))
-    q_shared_dispersion = ed.models.Normal(tf.Variable(tf.zeros([1])), tf.Variable(tf.zeros([1])))
-    q_dropout = ed.models.Normal(tf.Variable(tf.zeros([n, p])), tf.Variable(tf.zeros([n, p])))
-    q_mean = ed.models.Normal(tf.Variable(tf.zeros([m, p])), tf.Variable(tf.zeros([m, p])))
-    q_dispersion = ed.models.Normal(tf.Variable(tf.zeros([m, p])), tf.Variable(tf.zeros([m, p])))
+    q_shared_dropout = Normal(tf.Variable(tf.zeros([1, p])), tf.Variable(tf.zeros([1])))
+    q_shared_mean = Normal(tf.Variable(tf.zeros([1, p])), tf.Variable(tf.zeros([1])))
+    q_shared_dispersion = Normal(tf.Variable(tf.zeros([1, p])), tf.Variable(tf.zeros([1])))
+
+    q_dropout = Normal(tf.Variable(tf.zeros([n, p])), tf.Variable(tf.zeros([n, p])))
+    q_mean = Normal(tf.Variable(tf.zeros([m, p])), tf.Variable(tf.zeros([m, p])))
+    q_dispersion = Normal(tf.Variable(tf.zeros([m, p])), tf.Variable(tf.zeros([m, p])))
   #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
 
   #+BEGIN_SRC ipython :async t
     # IMPORTANT: we have to explicitly make sure Edward does not use analytical
@@ -170,6 +202,11 @@
         mean: q_mean,
         dispersion: q_dispersion,
       },
-      data={y: counts})
+      data={y: umi_qc.values.T})
     inf.run(n_samples=10)
   #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  486e4f90-66f8-4f28-94a5-eef5ca89d28e
+  :END:
