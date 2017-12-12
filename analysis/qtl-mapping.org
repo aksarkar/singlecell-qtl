@@ -69,6 +69,7 @@
       [
         annotations['reads_ercc'] / annotations.filter(like='reads_', axis=1).agg(np.sum, axis=1) < 0.5,
         annotations['detect_hs'] > 4000,
+        annotations['chip_id'] != 'NA19092',
       ]).values
     keep_genes = functools.reduce(
       np.logical_and,
@@ -84,6 +85,17 @@
   #+RESULTS:
   :RESULTS:
   : (15636, 1861)
+  :END:
+
+  #+NAME: onehot-qc
+  #+BEGIN_SRC ipython
+    individuals = sorted(annotations_qc['chip_id'].unique())
+    onehot = np.zeros((umi_qc.shape[1], len(individuals)), dtype=np.float32)
+    onehot[np.arange(onehot.shape[0]),annotations_qc['chip_id'].apply(lambda x: individuals.index(x))] = 1
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
   :END:
 
 * Mean-QTL calling
