@@ -1,7 +1,15 @@
 #+TITLE: NB estimation
 #+SETUPFILE: setup.org
 
-* Setup
+* Introduction
+
+  Here we investigate how mean and dispersion estimates can explain away each
+  other using single cell RNA-Seq data for the gene /ZSWIM7/ (the top eQTL gene
+  from the iPSC bulk RNA-Seq study).
+
+  For simplicity, we ignore genotype for now.
+
+* Setup                                                            :noexport:
 
   #+BEGIN_SRC emacs-lisp
     (org-babel-lob-ingest "/home/aksarkar/projects/singlecell-qtl/analysis/qtl-mapping.org")
@@ -21,6 +29,7 @@
 
     import edward as ed
     import functools
+    import matplotlib.pyplot as plt
     import numpy as np
     import pandas as pd
     import pickle
@@ -33,6 +42,8 @@
 
 * Data
 
+  We [[file:hurdle.org::*Test%20case][previously prepared the relevant data]]:
+
   #+BEGIN_SRC ipython
     with open('test_data.pkl', 'rb') as f:
       data = pickle.load(f)
@@ -44,9 +55,154 @@
   : dict_keys(['onehot', 'genotypes', 'counts', 'normalizers'])
   :END:
 
-* Model specification and inference
+  Plot the distribution of the data:
+
+  #+BEGIN_SRC ipython :ipyfile figure/nb.org/data.png
+    n = data['counts'].shape[0]
+    plt.clf()
+    plt.gcf().set_size_inches(8, 6)
+    plt.scatter(x=np.where(data['onehot'] == 1)[1] + np.random.normal(scale=0.1, size=n), y=data['counts'], s=2)
+    plt.xlabel('Individual')
+    plt.ylabel('UMI count')
+    plt.gca().set_xticks([])
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  : []
+  [[file:figure/nb.org/data.png]]
+  :END:
+
+* Per-individual mean, no overdispersion
 
   #+BEGIN_SRC ipython
+    tf.reset_default_graph()
+    ed.get_session().close()
+
+    n, p = data['genotypes'].shape
+    m, _ = data['onehot'].shape
+
+    onehot = tf.placeholder(tf.float32, [m, n])
+    mean_bias = ed.models.Normal(loc=tf.zeros([n, 1]), scale=tf.ones([n, 1]))
+    counts = ed.models.Poisson(rate=tf.exp(tf.matmul(onehot, mean_bias)))
+
+    q_mean_bias = ed.models.NormalWithSoftplusScale(
+      loc=tf.Variable(tf.random_normal([n, 1])),
+      scale=tf.Variable(tf.random_normal([n, 1])))
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+BEGIN_SRC ipython :results output
+    inf = ed.ReparameterizationKLqp(
+      latent_vars={mean_bias: q_mean_bias},
+      data={onehot: data['onehot'], counts: data['counts']})
+    inf.run(n_samples=10, optimizer=tf.train.AdamOptimizer(learning_rate=5e-3))
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  1000/1000 [100%] ██████████████████████████████ Elapsed: 3s | Loss: 5215.281
+  :END:
+
+  Plot posterior 95% credible intervals for the latent mean of each individual.
+
+  #+BEGIN_SRC ipython :ipyfile figure/nb.org/no-overdispersion.png
+    res = pd.DataFrame(np.hstack(ed.get_session().run([q_mean_bias.mean(), q_mean_bias.variance()])))
+    plt.clf()
+    plt.errorbar(x=np.arange(n), y=res[0], yerr=1.96 * np.sqrt(res[1]), fmt='o')
+    plt.xlabel('Individual')
+    plt.ylabel('Latent mean')
+    plt.gca().set_xticks([])
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  : []
+  [[file:figure/nb.org/no-overdispersion.png]]
+  :END:
+
+* Per-individual mean, global overdispersion
+
+  #+BEGIN_SRC ipython
+    tf.reset_default_graph()
+    ed.get_session().close()
+
+    n, p = data['genotypes'].shape
+    m, _ = data['onehot'].shape
+
+    onehot = tf.placeholder(tf.float32, [m, n])
+    mean_bias = ed.models.Normal(loc=tf.zeros([n, 1]), scale=tf.ones([n, 1]))
+    disp_bias = ed.models.Normal(loc=tf.zeros([1, 1]), scale=tf.ones([1, 1]))
+    rate = ed.models.Gamma(
+      concentration=tf.exp(tf.matmul(onehot, mean_bias)),
+      rate=tf.exp(disp_bias))
+    counts = ed.models.Poisson(rate=rate)
+
+    q_mean_bias = ed.models.NormalWithSoftplusScale(
+      loc=tf.Variable(tf.random_normal([n, 1])),
+      scale=tf.Variable(tf.random_normal([n, 1])))
+    q_disp_bias = ed.models.NormalWithSoftplusScale(
+      loc=tf.Variable(tf.random_normal([1, 1])),
+      scale=tf.Variable(tf.random_normal([1, 1])))
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+BEGIN_SRC ipython :results output
+    inf = ed.ReparameterizationKLqp(
+      latent_vars={mean_bias: q_mean_bias, disp_bias: q_disp_bias},
+      data={onehot: data['onehot'], counts: data['counts']})
+    inf.run(n_samples=10, optimizer=tf.train.AdamOptimizer(learning_rate=5e-3))
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  1000/1000 [100%] ██████████████████████████████ Elapsed: 10s | Loss: 15706.714
+  :END:
+
+  Plot the posterior 95% credible interval for the latent means.
+
+  #+BEGIN_SRC ipython :ipyfile figure/nb.org/global-overdispersion.png
+    res = pd.DataFrame(np.hstack(ed.get_session().run([q_mean_bias.mean(), q_mean_bias.variance()])))
+    plt.clf()
+    plt.errorbar(x=np.arange(n), y=res[0], yerr=1.96 * np.sqrt(res[1]), fmt='o')
+    plt.xlabel('Individual')
+    plt.ylabel('Latent mean')
+    plt.gca().set_xticks([])
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  : []
+  [[file:figure/nb.org/global-overdispersion.png]]
+  :END:
+
+  Recover the estimated posterior mean and variance of the global dispersion
+  parameter.
+
+  #+BEGIN_SRC ipython
+    pd.DataFrame(np.hstack(ed.get_session().run([q_disp_bias.mean(), q_disp_bias.variance()])))  
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  #+BEGIN_EXAMPLE
+            0         1
+    0 -0.709709  0.002269
+  #+END_EXAMPLE
+  :END:
+
+* Per-individual mean, per-individual overdispersion
+
+  #+BEGIN_SRC ipython
+    tf.reset_default_graph()
+    ed.get_session().close()
+
     n, p = data['genotypes'].shape
     m, _ = data['onehot'].shape
 
@@ -85,66 +241,36 @@
   :RESULTS:
   :END:
 
-  #+BEGIN_SRC ipython
-    pd.DataFrame(np.hstack(ed.get_session().run([q_mean_bias.mean(), q_mean_bias.variance()])))
+  Plot the posterior 95% credible intervals for the latent means.
+
+  #+BEGIN_SRC ipython :ipyfile mean-per-individual-dispersion.png
+    res = pd.DataFrame(np.hstack(ed.get_session().run([q_mean_bias.mean(), q_mean_bias.variance()])))
+    plt.clf()
+    plt.errorbar(x=np.arange(n), y=res[0], yerr=1.96 * np.sqrt(res[1]), fmt='o')
+    plt.xlabel('Individual')
+    plt.ylabel('Latent mean')
+    plt.gca().set_xticks([])
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  #+BEGIN_EXAMPLE
-             0         1
-    0   0.007907  0.990953
-    1  -0.003703  0.986969
-    2   0.019831  0.967275
-    3  -0.030037  0.994065
-    4   0.042421  0.978162
-    5   0.022240  0.972101
-    6  -0.028268  1.088094
-    7   0.003639  0.986326
-    8   0.016368  0.953875
-    9   0.022106  0.964523
-    10  0.009743  0.995725
-    11  0.010064  1.007149
-    12 -0.016074  1.022777
-    13 -0.004921  0.998337
-    14  0.010286  0.998899
-    15 -0.021722  1.008596
-    16  0.001837  0.976684
-    17 -0.000086  1.029787
-    18  0.009203  0.918708
-    19  0.003539  0.950592
-    20  0.053963  1.018629
-  #+END_EXAMPLE
+  : []
+  [[file:mean-per-individual-dispersion.png]]
   :END:
 
-  #+BEGIN_SRC ipython
-    pd.DataFrame(np.hstack(ed.get_session().run([q_disp_bias.mean(), q_disp_bias.variance()])))
+  Plot the posterior 95% credible intervals for the latent dispersions.
+
+  #+BEGIN_SRC ipython :ipyfile disp-per-individual-dispersion.png
+    res = pd.DataFrame(np.hstack(ed.get_session().run([q_disp_bias.mean(), q_disp_bias.variance()])))
+    plt.clf()
+    plt.errorbar(x=np.arange(n), y=res[0], yerr=1.96 * np.sqrt(res[1]), fmt='o')
+    plt.xlabel('Individual')
+    plt.ylabel('Latent dispersion')
+    plt.gca().set_xticks([])
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  #+BEGIN_EXAMPLE
-             0         1
-    0  -0.640556  0.035325
-    1  -0.312293  0.027051
-    2  -0.921103  0.018066
-    3  -0.615298  0.534105
-    4  -0.302112  0.051284
-    5  -0.306494  0.068147
-    6  -0.842560  0.013169
-    7  -0.538068  1.883408
-    8  -0.544103  0.031011
-    9  -0.627381  0.028651
-    10  0.750082  2.306046
-    11 -0.287370  0.100765
-    12 -1.008165  0.050029
-    13 -0.846644  0.013969
-    14 -0.629209  0.225979
-    15 -1.115731  0.022046
-    16  0.161052  9.753973
-    17 -0.492946  0.016056
-    18 -0.417798  0.018156
-    19 -0.896208  0.013385
-    20 -0.417364  0.008798
-  #+END_EXAMPLE
+  : []
+  [[file:disp-per-individual-dispersion.png]]
   :END:

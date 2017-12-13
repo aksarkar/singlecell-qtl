@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2017-12-13 Wed 12:12 -->
+<!-- 2017-12-13 Wed 13:21 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NB estimation</title>
@@ -235,15 +235,222 @@ for the JavaScript code in this tag.
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents">
 <ul>
-<li><a href="#orgbf2a81f">Model specification and inference</a></li>
+<li><a href="#org968fe35">Introduction</a></li>
+<li><a href="#org5bef8cf">Data</a></li>
+<li><a href="#org47fd6f0">Per-individual mean, no overdispersion</a></li>
+<li><a href="#org247eb52">Per-individual mean, global overdispersion</a></li>
+<li><a href="#org4569aa0">Per-individual mean, per-individual overdispersion</a></li>
 </ul>
 </div>
 </div>
-<div id="outline-container-orgbf2a81f" class="outline-2">
-<h2 id="orgbf2a81f">Model specification and inference</h2>
-<div class="outline-text-2" id="text-orgbf2a81f">
+
+<div id="outline-container-org968fe35" class="outline-2">
+<h2 id="org968fe35">Introduction</h2>
+<div class="outline-text-2" id="text-org968fe35">
+<p>
+Here we investigate how mean and dispersion estimates can explain away each
+other using single cell RNA-Seq data for the gene <i>ZSWIM7</i> (the top eQTL gene
+from the iPSC bulk RNA-Seq study).
+</p>
+
+<p>
+For simplicity, we ignore genotype for now.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5bef8cf" class="outline-2">
+<h2 id="org5bef8cf">Data</h2>
+<div class="outline-text-2" id="text-org5bef8cf">
+<p>
+We <a href="hurdle.html#orgfaab464">previously prepared the relevant data</a>:
+</p>
+
 <div class="org-src-container">
-<pre class="src src-ipython"><span class="org-variable-name">n</span>, <span class="org-variable-name">p</span> = data[<span class="org-string">'genotypes'</span>].shape
+<pre class="src src-ipython"><span class="org-keyword">with</span> <span class="org-builtin">open</span>(<span class="org-string">'test_data.pkl'</span>, <span class="org-string">'rb'</span>) <span class="org-keyword">as</span> f:
+  <span class="org-variable-name">data</span> = pickle.load(f)
+data.keys()
+</pre>
+</div>
+
+<pre class="example">
+dict_keys(['onehot', 'genotypes', 'counts', 'normalizers'])
+
+</pre>
+
+<p>
+Plot the distribution of the data:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">n</span> = data[<span class="org-string">'counts'</span>].shape[0]
+plt.clf()
+plt.gcf().set_size_inches(8, 6)
+plt.scatter(x=np.where(data[<span class="org-string">'onehot'</span>] == 1)[1] + np.random.normal(scale=0.1, size=n), y=data[<span class="org-string">'counts'</span>], s=2)
+plt.xlabel(<span class="org-string">'Individual'</span>)
+plt.ylabel(<span class="org-string">'UMI count'</span>)
+plt.gca().set_xticks([])
+</pre>
+</div>
+
+<pre class="example">
+[]
+
+</pre>
+
+<div class="figure">
+<p><img src="figure/nb.org/data.png" alt="data.png">
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org47fd6f0" class="outline-2">
+<h2 id="org47fd6f0">Per-individual mean, no overdispersion</h2>
+<div class="outline-text-2" id="text-org47fd6f0">
+<div class="org-src-container">
+<pre class="src src-ipython">tf.reset_default_graph()
+ed.get_session().close()
+
+<span class="org-variable-name">n</span>, <span class="org-variable-name">p</span> = data[<span class="org-string">'genotypes'</span>].shape
+<span class="org-variable-name">m</span>, <span class="org-variable-name">_</span> = data[<span class="org-string">'onehot'</span>].shape
+
+<span class="org-variable-name">onehot</span> = tf.placeholder(tf.float32, [m, n])
+<span class="org-variable-name">mean_bias</span> = ed.models.Normal(loc=tf.zeros([n, 1]), scale=tf.ones([n, 1]))
+<span class="org-variable-name">counts</span> = ed.models.Poisson(rate=tf.exp(tf.matmul(onehot, mean_bias)))
+
+<span class="org-variable-name">q_mean_bias</span> = ed.models.NormalWithSoftplusScale(
+  loc=tf.Variable(tf.random_normal([n, 1])),
+  scale=tf.Variable(tf.random_normal([n, 1])))
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">inf</span> = ed.ReparameterizationKLqp(
+  latent_vars={mean_bias: q_mean_bias},
+  data={onehot: data[<span class="org-string">'onehot'</span>], counts: data[<span class="org-string">'counts'</span>]})
+inf.run(n_samples=10, optimizer=tf.train.AdamOptimizer(learning_rate=5e-3))
+</pre>
+</div>
+
+<p>
+1000/1000 <code>[100%]</code> ██████████████████████████████ Elapsed: 3s | Loss: 5215.281
+</p>
+
+<p>
+Plot posterior 95% credible intervals for the latent mean of each individual.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">res</span> = pd.DataFrame(np.hstack(ed.get_session().run([q_mean_bias.mean(), q_mean_bias.variance()])))
+plt.clf()
+plt.errorbar(x=np.arange(n), y=res[0], yerr=1.96 * np.sqrt(res[1]), fmt=<span class="org-string">'o'</span>)
+plt.xlabel(<span class="org-string">'Individual'</span>)
+plt.ylabel(<span class="org-string">'Latent mean'</span>)
+plt.gca().set_xticks([])
+</pre>
+</div>
+
+<pre class="example">
+[]
+
+</pre>
+
+<div class="figure">
+<p><img src="figure/nb.org/no-overdispersion.png" alt="no-overdispersion.png">
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org247eb52" class="outline-2">
+<h2 id="org247eb52">Per-individual mean, global overdispersion</h2>
+<div class="outline-text-2" id="text-org247eb52">
+<div class="org-src-container">
+<pre class="src src-ipython">tf.reset_default_graph()
+ed.get_session().close()
+
+<span class="org-variable-name">n</span>, <span class="org-variable-name">p</span> = data[<span class="org-string">'genotypes'</span>].shape
+<span class="org-variable-name">m</span>, <span class="org-variable-name">_</span> = data[<span class="org-string">'onehot'</span>].shape
+
+<span class="org-variable-name">onehot</span> = tf.placeholder(tf.float32, [m, n])
+<span class="org-variable-name">mean_bias</span> = ed.models.Normal(loc=tf.zeros([n, 1]), scale=tf.ones([n, 1]))
+<span class="org-variable-name">disp_bias</span> = ed.models.Normal(loc=tf.zeros([1, 1]), scale=tf.ones([1, 1]))
+<span class="org-variable-name">rate</span> = ed.models.Gamma(
+  concentration=tf.exp(tf.matmul(onehot, mean_bias)),
+  rate=tf.exp(disp_bias))
+<span class="org-variable-name">counts</span> = ed.models.Poisson(rate=rate)
+
+<span class="org-variable-name">q_mean_bias</span> = ed.models.NormalWithSoftplusScale(
+  loc=tf.Variable(tf.random_normal([n, 1])),
+  scale=tf.Variable(tf.random_normal([n, 1])))
+<span class="org-variable-name">q_disp_bias</span> = ed.models.NormalWithSoftplusScale(
+  loc=tf.Variable(tf.random_normal([1, 1])),
+  scale=tf.Variable(tf.random_normal([1, 1])))
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">inf</span> = ed.ReparameterizationKLqp(
+  latent_vars={mean_bias: q_mean_bias, disp_bias: q_disp_bias},
+  data={onehot: data[<span class="org-string">'onehot'</span>], counts: data[<span class="org-string">'counts'</span>]})
+inf.run(n_samples=10, optimizer=tf.train.AdamOptimizer(learning_rate=5e-3))
+</pre>
+</div>
+
+<p>
+1000/1000 <code>[100%]</code> ██████████████████████████████ Elapsed: 10s | Loss: 15706.714
+</p>
+
+<p>
+Plot the posterior 95% credible interval for the latent means.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">res</span> = pd.DataFrame(np.hstack(ed.get_session().run([q_mean_bias.mean(), q_mean_bias.variance()])))
+plt.clf()
+plt.errorbar(x=np.arange(n), y=res[0], yerr=1.96 * np.sqrt(res[1]), fmt=<span class="org-string">'o'</span>)
+plt.xlabel(<span class="org-string">'Individual'</span>)
+plt.ylabel(<span class="org-string">'Latent mean'</span>)
+plt.gca().set_xticks([])
+</pre>
+</div>
+
+<pre class="example">
+[]
+
+</pre>
+
+<div class="figure">
+<p><img src="figure/nb.org/global-overdispersion.png" alt="global-overdispersion.png">
+</p>
+</div>
+
+<p>
+Recover the estimated posterior mean and variance of the global dispersion
+parameter.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython">pd.DataFrame(np.hstack(ed.get_session().run([q_disp_bias.mean(), q_disp_bias.variance()])))  
+</pre>
+</div>
+
+<pre class="example">
+        0         1
+0 -0.709709  0.002269
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org4569aa0" class="outline-2">
+<h2 id="org4569aa0">Per-individual mean, per-individual overdispersion</h2>
+<div class="outline-text-2" id="text-org4569aa0">
+<div class="org-src-container">
+<pre class="src src-ipython">tf.reset_default_graph()
+ed.get_session().close()
+
+<span class="org-variable-name">n</span>, <span class="org-variable-name">p</span> = data[<span class="org-string">'genotypes'</span>].shape
 <span class="org-variable-name">m</span>, <span class="org-variable-name">_</span> = data[<span class="org-string">'onehot'</span>].shape
 
 <span class="org-variable-name">onehot</span> = tf.placeholder(tf.float32, [m, n])
@@ -275,71 +482,59 @@ for the JavaScript code in this tag.
 </pre>
 </div>
 
+<p>
+Plot the posterior 95% credible intervals for the latent means.
+</p>
+
 <div class="org-src-container">
-<pre class="src src-ipython">pd.DataFrame(np.hstack(ed.get_session().run([q_mean_bias.mean(), q_mean_bias.variance()])))
+<pre class="src src-ipython"><span class="org-variable-name">res</span> = pd.DataFrame(np.hstack(ed.get_session().run([q_mean_bias.mean(), q_mean_bias.variance()])))
+plt.clf()
+plt.errorbar(x=np.arange(n), y=res[0], yerr=1.96 * np.sqrt(res[1]), fmt=<span class="org-string">'o'</span>)
+plt.xlabel(<span class="org-string">'Individual'</span>)
+plt.ylabel(<span class="org-string">'Latent mean'</span>)
+plt.gca().set_xticks([])
 </pre>
 </div>
 
 <pre class="example">
-         0         1
-0   0.007907  0.990953
-1  -0.003703  0.986969
-2   0.019831  0.967275
-3  -0.030037  0.994065
-4   0.042421  0.978162
-5   0.022240  0.972101
-6  -0.028268  1.088094
-7   0.003639  0.986326
-8   0.016368  0.953875
-9   0.022106  0.964523
-10  0.009743  0.995725
-11  0.010064  1.007149
-12 -0.016074  1.022777
-13 -0.004921  0.998337
-14  0.010286  0.998899
-15 -0.021722  1.008596
-16  0.001837  0.976684
-17 -0.000086  1.029787
-18  0.009203  0.918708
-19  0.003539  0.950592
-20  0.053963  1.018629
+[]
+
 </pre>
 
+<div class="figure">
+<p><img src="mean-per-individual-dispersion.png" alt="mean-per-individual-dispersion.png">
+</p>
+</div>
+
+<p>
+Plot the posterior 95% credible intervals for the latent dispersions.
+</p>
+
 <div class="org-src-container">
-<pre class="src src-ipython">pd.DataFrame(np.hstack(ed.get_session().run([q_disp_bias.mean(), q_disp_bias.variance()])))
+<pre class="src src-ipython"><span class="org-variable-name">res</span> = pd.DataFrame(np.hstack(ed.get_session().run([q_disp_bias.mean(), q_disp_bias.variance()])))
+plt.clf()
+plt.errorbar(x=np.arange(n), y=res[0], yerr=1.96 * np.sqrt(res[1]), fmt=<span class="org-string">'o'</span>)
+plt.xlabel(<span class="org-string">'Individual'</span>)
+plt.ylabel(<span class="org-string">'Latent dispersion'</span>)
+plt.gca().set_xticks([])
 </pre>
 </div>
 
 <pre class="example">
-         0         1
-0  -0.640556  0.035325
-1  -0.312293  0.027051
-2  -0.921103  0.018066
-3  -0.615298  0.534105
-4  -0.302112  0.051284
-5  -0.306494  0.068147
-6  -0.842560  0.013169
-7  -0.538068  1.883408
-8  -0.544103  0.031011
-9  -0.627381  0.028651
-10  0.750082  2.306046
-11 -0.287370  0.100765
-12 -1.008165  0.050029
-13 -0.846644  0.013969
-14 -0.629209  0.225979
-15 -1.115731  0.022046
-16  0.161052  9.753973
-17 -0.492946  0.016056
-18 -0.417798  0.018156
-19 -0.896208  0.013385
-20 -0.417364  0.008798
+[]
+
 </pre>
+
+<div class="figure">
+<p><img src="disp-per-individual-dispersion.png" alt="disp-per-individual-dispersion.png">
+</p>
+</div>
 </div>
 </div>
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2017-12-13 Wed 12:12</p>
+<p class="date">Created: 2017-12-13 Wed 13:21</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>
