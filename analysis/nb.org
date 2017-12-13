@@ -55,17 +55,30 @@
     normalizers = tf.placeholder(tf.float32, [m, 1])
 
     mean_bias = ed.models.Normal(loc=tf.zeros([n, 1]), scale=tf.ones([n, 1]))
-    mean = tf.exp(tf.matmul(onehot, mean_bias))
-    counts = ed.models.Poisson(rate=mean)
+    disp_bias = ed.models.Normal(loc=tf.zeros([1, 1]), scale=tf.ones([1, 1]))
+    rate = ed.models.Gamma(
+      concentration=tf.exp(tf.matmul(onehot, mean_bias)),
+      rate=tf.exp(disp_bias))
+    counts = ed.models.Poisson(rate=rate)
 
     q_mean_bias = ed.models.NormalWithSoftplusScale(
       loc=tf.Variable(tf.random_normal([n, 1])),
       scale=tf.Variable(tf.random_normal([n, 1])))
+    q_disp_bias = ed.models.NormalWithSoftplusScale(
+      loc=tf.Variable(tf.random_normal([1, 1])),
+      scale=tf.Variable(tf.random_normal([1, 1])))
 
-    inf = ed.KLqp(
-      latent_vars={mean_bias: q_mean_bias},
+    inf = ed.ReparameterizationKLqp(
+      latent_vars={mean_bias: q_mean_bias, disp_bias: q_disp_bias},
       data={globals()[k]: v for k, v in data.items()})
-    inf.run()
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+BEGIN_SRC ipython :async t
+    inf.run(n_samples=10, optimizer=tf.train.AdamOptimizer(learning_rate=5e-3))
   #+END_SRC
 
   #+RESULTS:
@@ -79,26 +92,35 @@
   #+RESULTS:
   :RESULTS:
   #+BEGIN_EXAMPLE
-  array([[-0.6086905 ],
-           [ 0.81585544],
-           [ 0.39037457],
-           [ 0.1272105 ],
-           [ 0.98086077],
-           [ 0.58910024],
-           [ 0.12276047],
-           [-1.11089456],
-           [ 0.31234893],
-           [ 0.66165096],
-           [-1.23624706],
-           [-0.62890494],
-           [ 0.16324095],
-           [ 0.83957553],
-           [-1.85474634],
-           [ 1.13695812],
-           [ 0.29519737],
-           [-1.38317037],
-           [ 0.2154126 ],
-           [ 1.12352216],
-           [ 1.03684735]], dtype=float32)
+  array([[-0.56121451],
+           [-0.13816464],
+           [ 0.79100668],
+           [ 1.39567852],
+           [-0.3465212 ],
+           [-1.5193845 ],
+           [-0.3371914 ],
+           [-1.73874974],
+           [ 1.25905216],
+           [-0.43997651],
+           [ 0.22527261],
+           [ 0.03913439],
+           [ 2.49046302],
+           [ 0.70775157],
+           [ 0.88101679],
+           [-1.8379662 ],
+           [ 0.20100313],
+           [-1.25099945],
+           [ 0.68994594],
+           [ 0.11357166],
+           [-0.2316011 ]], dtype=float32)
   #+END_EXAMPLE
+  :END:
+
+  #+BEGIN_SRC ipython
+    ed.get_session().run(disp_bias)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  : array([[-0.33581865]], dtype=float32)
   :END:
