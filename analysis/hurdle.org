@@ -102,7 +102,7 @@
   #+CALL: ipython3(memory="16G", venv="scqtl", partition="gpu2") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 41289837
+  : Submitted batch job 41384283
 
   #+BEGIN_SRC ipython
     import functools
@@ -208,21 +208,29 @@
 
   #+BEGIN_SRC ipython
     genotypes = _extract_genotypes(gene_info.loc['ENSG00000214941'], vcf=vcf, header=header, window=int(1e6)).rename(columns=lambda x: 'NA{}'.format(x))[sorted(annotations_qc['chip_id'].unique())]
-    genotypes -= genotypes.agg(np.mean, axis=1)
+    genotypes = genotypes.T.transform(lambda x: x - x.mean()).fillna(0)
     genotypes.shape
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  : (2506, 21)
+  : (21, 2506)
+  :END:
+
+  #+BEGIN_SRC ipython
+    data = {'onehot': onehot,
+            'genotypes': genotypes.values,
+            'counts': umi_qc.loc['ENSG00000214941'].values.astype(np.float32).reshape(-1, 1),
+            'normalizers': -np.log(umi_qc.agg(np.sum)).values.reshape(-1, 1)}
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
   :END:
 
   #+BEGIN_SRC ipython
     with open('test_data.pkl', 'wb') as f:
-      pickle.dump({'onehot': onehot,
-                   'genotypes': genotypes.values.T,
-                   'counts': umi_qc.loc['ENSG00000214941'].values.astype(np.float32).reshape(-1, 1),
-                   'normalizers': -np.log(umi_qc.agg(np.sum)).values.reshape(-1, 1)}, f)
+      pickle.dump(data, f)
   #+END_SRC
 
   #+RESULTS:
