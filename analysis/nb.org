@@ -1,0 +1,81 @@
+#+TITLE: NB estimation
+#+SETUPFILE: setup.org
+
+* Setup
+
+  #+BEGIN_SRC emacs-lisp
+    (org-babel-lob-ingest "/home/aksarkar/projects/singlecell-qtl/analysis/qtl-mapping.org")
+    (org-babel-lob-ingest "/home/aksarkar/.emacs.d/org-templates/library.org")
+  #+END_SRC
+
+  #+RESULTS:
+  : 1
+
+  #+CALL: ipython3(venv="scqtl", partition="gpu2")
+
+  #+RESULTS:
+  : Submitted batch job 41382582
+
+  #+BEGIN_SRC ipython
+    %matplotlib inline
+
+    import edward as ed
+    import functools
+    import numpy as np
+    import pandas as pd
+    import pickle
+    import tensorflow as tf
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+* Data
+
+  #+BEGIN_SRC ipython
+    with open('test_data.pkl', 'rb') as f:
+      data = pickle.load(f)
+    data.keys()
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  : dict_keys(['onehot', 'genotypes', 'counts', 'normalizers'])
+  :END:
+
+* Model specification and inference
+
+  #+BEGIN_SRC ipython
+    n, p = data['genotypes'].shape
+    m, _ = data['onehot'].shape
+
+    onehot = tf.placeholder(tf.float32, [m, n])
+    genotypes = tf.placeholder(tf.float32, [n, p])
+    normalizers = tf.placeholder(tf.float32, [m, 1])
+
+    rate = ed.models.Normal(loc=[0.], scale=[1.])
+    counts = ed.models.Poisson(rate=tf.exp(rate * tf.ones([m, 1])))
+
+    q_rate = ed.models.NormalWithSoftplusScale(
+      loc=tf.Variable(tf.zeros([1])),
+      scale=tf.Variable(tf.ones([1])))
+
+    inf = ed.KLqp(
+      latent_vars={rate: q_rate},
+      data={globals()[k]: v for k, v in data.items()})
+    inf.run()
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+BEGIN_SRC ipython
+    ed.get_session().run([q_rate.mean()])
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  : [array([ 1.18770432], dtype=float32)]
+  :END:
