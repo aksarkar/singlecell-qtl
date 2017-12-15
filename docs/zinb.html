@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2017-12-06 Wed 15:05 -->
+<!-- 2017-12-14 Thu 20:33 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ZINB estimation</title>
@@ -250,11 +250,23 @@ using a hierarchical zero-inflated negative binomial (ZINB) model.
 </p>
 
 <p>
-The basic idea is that after fitting the model, we will recover an
-individual-by-gene mean matrix and individual-by-gene dispersion matrix. We
-can use the columns of this matrix as continuous phenotypes to plug into
-existing QTL mapping software.
+The key issues are:
 </p>
+
+<ol class="org-ol">
+<li><p>
+<b>This model does not use genotype information.</b> The basic idea is that
+after fitting the model, we will recover an individual-by-gene mean matrix
+and individual-by-gene dispersion matrix. We can use the columns of this
+matrix as continuous phenotypes to plug into existing QTL mapping
+software.
+</p>
+
+<p>
+Related, this model does not use covariates (either measured or inferred)
+to estimate any of the parameters.
+</p></li>
+</ol>
 </div>
 </div>
 
@@ -267,18 +279,25 @@ describe the model below:
 </p>
 
 <div class="org-src-container">
-<pre class="src src-ipython"><span class="org-variable-name">p</span>, <span class="org-variable-name">n</span> = umi.shape
+<pre class="src src-ipython"><span class="org-variable-name">Normal</span> = ed.models.Normal
+<span class="org-variable-name">p</span>, <span class="org-variable-name">n</span> = umi_qc.shape
 <span class="org-variable-name">_</span>, <span class="org-variable-name">m</span> = onehot.shape
 
-<span class="org-variable-name">shared_dropout</span> = ed.models.Normal(tf.constant(0.), scale=tf.constant(1.))
-<span class="org-variable-name">dropout</span> = ed.models.Normal(loc=tf.fill([n, p], shared_dropout), scale=tf.constant(1.))
-<span class="org-variable-name">shared_mean</span> = ed.models.Normal(tf.constant(0.), tf.constant(1.))
-<span class="org-variable-name">mean</span> = ed.models.Normal(loc=tf.fill([m, p], shared_mean), scale=tf.constant(1.))
-<span class="org-variable-name">shared_dispersion</span> = ed.models.Normal(tf.constant(0.), tf.constant(1.))
-<span class="org-variable-name">dispersion</span> = ed.models.Normal(loc=tf.fill([m, p], shared_mean), scale=tf.constant(1.))
+<span class="org-variable-name">shared_dropout</span> = Normal(tf.zeros([1]), scale=tf.ones([1]))
+<span class="org-variable-name">shared_mean</span> = Normal(tf.zeros([1]), scale=tf.ones([1]))
+<span class="org-variable-name">shared_dispersion</span> = Normal(tf.zeros([1]), scale=tf.ones([1]))
+
+<span class="org-variable-name">gene_dropout</span> = Normal(tf.ones([1, p]) * shared_dropout, scale=tf.ones([1, p]))
+<span class="org-variable-name">gene_mean</span> = Normal(tf.ones([1, p]) * shared_mean, scale=tf.ones([1, p]))
+<span class="org-variable-name">gene_dispersion</span> = Normal(tf.ones([1, p]) * shared_dispersion, scale=tf.ones([1, p]))
+
+<span class="org-variable-name">dropout</span> = Normal(loc=tf.ones([n, 1]) * gene_dropout, scale=tf.constant(1.))
+<span class="org-variable-name">mean</span> = Normal(loc=tf.ones([m, 1]) * gene_mean, scale=tf.constant(1.))
+<span class="org-variable-name">dispersion</span> = Normal(loc=tf.ones([m, 1]) * gene_dispersion, scale=tf.constant(1.))
+
 <span class="org-variable-name">y</span> = ZINB(dropout=dropout,
-         mean=tf.matmul(onehot, mean),
-         dispersion=tf.matmul(onehot, dispersion))
+         mean=tf.exp(tf.matmul(onehot, mean)),
+         dispersion=tf.exp(tf.matmul(onehot, dispersion)))
 </pre>
 </div>
 
@@ -287,12 +306,13 @@ We fit the model using variational inference.
 </p>
 
 <div class="org-src-container">
-<pre class="src src-ipython"><span class="org-variable-name">q_shared_dropout</span> = ed.models.Normal(tf.Variable(tf.zeros([1])), tf.Variable(tf.zeros([1])))
-<span class="org-variable-name">q_shared_mean</span> = ed.models.Normal(tf.Variable(tf.zeros([1])), tf.Variable(tf.zeros([1])))
-<span class="org-variable-name">q_shared_dispersion</span> = ed.models.Normal(tf.Variable(tf.zeros([1])), tf.Variable(tf.zeros([1])))
-<span class="org-variable-name">q_dropout</span> = ed.models.Normal(tf.Variable(tf.zeros([n, p])), tf.Variable(tf.zeros([n, p])))
-<span class="org-variable-name">q_mean</span> = ed.models.Normal(tf.Variable(tf.zeros([m, p])), tf.Variable(tf.zeros([m, p])))
-<span class="org-variable-name">q_dispersion</span> = ed.models.Normal(tf.Variable(tf.zeros([m, p])), tf.Variable(tf.zeros([m, p])))
+<pre class="src src-ipython"><span class="org-variable-name">q_shared_dropout</span> = Normal(tf.Variable(tf.zeros([1, p])), tf.Variable(tf.zeros([1])))
+<span class="org-variable-name">q_shared_mean</span> = Normal(tf.Variable(tf.zeros([1, p])), tf.Variable(tf.zeros([1])))
+<span class="org-variable-name">q_shared_dispersion</span> = Normal(tf.Variable(tf.zeros([1, p])), tf.Variable(tf.zeros([1])))
+
+<span class="org-variable-name">q_dropout</span> = Normal(tf.Variable(tf.zeros([n, p])), tf.Variable(tf.zeros([n, p])))
+<span class="org-variable-name">q_mean</span> = Normal(tf.Variable(tf.zeros([m, p])), tf.Variable(tf.zeros([m, p])))
+<span class="org-variable-name">q_dispersion</span> = Normal(tf.Variable(tf.zeros([m, p])), tf.Variable(tf.zeros([m, p])))
 </pre>
 </div>
 
@@ -308,16 +328,20 @@ We fit the model using variational inference.
     mean: q_mean,
     dispersion: q_dispersion,
   },
-  data={y: counts})
+  data={y: umi_qc.values.T})
 inf.run(n_samples=10)
 </pre>
 </div>
+
+<p>
+486e4f90-66f8-4f28-94a5-eef5ca89d28e
+</p>
 </div>
 </div>
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2017-12-06 Wed 15:05</p>
+<p class="date">Created: 2017-12-14 Thu 20:33</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>

@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2017-12-13 Wed 13:21 -->
+<!-- 2017-12-14 Thu 20:33 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NB estimation</title>
@@ -235,18 +235,18 @@ for the JavaScript code in this tag.
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents">
 <ul>
-<li><a href="#org968fe35">Introduction</a></li>
-<li><a href="#org5bef8cf">Data</a></li>
+<li><a href="#orgc4ca55f">Introduction</a></li>
+<li><a href="#org2006bde">Data</a></li>
 <li><a href="#org47fd6f0">Per-individual mean, no overdispersion</a></li>
-<li><a href="#org247eb52">Per-individual mean, global overdispersion</a></li>
-<li><a href="#org4569aa0">Per-individual mean, per-individual overdispersion</a></li>
+<li><a href="#org1b53395">Per-individual mean, global overdispersion</a></li>
+<li><a href="#org477b2bb">Per-individual mean, per-individual overdispersion</a></li>
 </ul>
 </div>
 </div>
 
-<div id="outline-container-org968fe35" class="outline-2">
-<h2 id="org968fe35">Introduction</h2>
-<div class="outline-text-2" id="text-org968fe35">
+<div id="outline-container-orgc4ca55f" class="outline-2">
+<h2 id="orgc4ca55f">Introduction</h2>
+<div class="outline-text-2" id="text-orgc4ca55f">
 <p>
 Here we investigate how mean and dispersion estimates can explain away each
 other using single cell RNA-Seq data for the gene <i>ZSWIM7</i> (the top eQTL gene
@@ -259,11 +259,11 @@ For simplicity, we ignore genotype for now.
 </div>
 </div>
 
-<div id="outline-container-org5bef8cf" class="outline-2">
-<h2 id="org5bef8cf">Data</h2>
-<div class="outline-text-2" id="text-org5bef8cf">
+<div id="outline-container-org2006bde" class="outline-2">
+<h2 id="org2006bde">Data</h2>
+<div class="outline-text-2" id="text-org2006bde">
 <p>
-We <a href="hurdle.html#orgfaab464">previously prepared the relevant data</a>:
+We <a href="hurdle.html#org24da7b9">previously prepared the relevant data</a>:
 </p>
 
 <div class="org-src-container">
@@ -363,9 +363,9 @@ plt.gca().set_xticks([])
 </div>
 </div>
 
-<div id="outline-container-org247eb52" class="outline-2">
-<h2 id="org247eb52">Per-individual mean, global overdispersion</h2>
-<div class="outline-text-2" id="text-org247eb52">
+<div id="outline-container-org1b53395" class="outline-2">
+<h2 id="org1b53395">Per-individual mean, global overdispersion</h2>
+<div class="outline-text-2" id="text-org1b53395">
 <div class="org-src-container">
 <pre class="src src-ipython">tf.reset_default_graph()
 ed.get_session().close()
@@ -443,9 +443,9 @@ parameter.
 </div>
 </div>
 
-<div id="outline-container-org4569aa0" class="outline-2">
-<h2 id="org4569aa0">Per-individual mean, per-individual overdispersion</h2>
-<div class="outline-text-2" id="text-org4569aa0">
+<div id="outline-container-org477b2bb" class="outline-2">
+<h2 id="org477b2bb">Per-individual mean, per-individual overdispersion</h2>
+<div class="outline-text-2" id="text-org477b2bb">
 <div class="org-src-container">
 <pre class="src src-ipython">tf.reset_default_graph()
 ed.get_session().close()
@@ -534,7 +534,7 @@ plt.gca().set_xticks([])
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2017-12-13 Wed 13:21</p>
+<p class="date">Created: 2017-12-14 Thu 20:33</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>
