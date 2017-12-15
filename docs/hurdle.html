@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2017-12-14 Thu 20:33 -->
+<!-- 2017-12-15 Fri 10:23 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hurdle model estimation</title>
@@ -235,13 +235,13 @@ for the JavaScript code in this tag.
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents">
 <ul>
-<li><a href="#org54c2464">Voom component</a></li>
+<li><a href="#org3de8c5e">ML sanity check</a></li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org54c2464" class="outline-2">
-<h2 id="org54c2464">Voom component</h2>
-<div class="outline-text-2" id="text-org54c2464">
+<div id="outline-container-org3de8c5e" class="outline-2">
+<h2 id="org3de8c5e">ML sanity check</h2>
+<div class="outline-text-2" id="text-org3de8c5e">
 <div class="org-src-container">
 <pre class="src src-ipython"><span class="org-keyword">with</span> <span class="org-builtin">open</span>(<span class="org-string">'test_data.pkl'</span>, <span class="org-string">'rb'</span>) <span class="org-keyword">as</span> f:
   <span class="org-variable-name">data</span> = pickle.load(f)
@@ -251,73 +251,53 @@ for the JavaScript code in this tag.
 </div>
 
 <div class="org-src-container">
-<pre class="src src-ipython">tf.reset_default_graph()
-ed.get_session().close()
+<pre class="src src-ipython"><span class="org-keyword">with</span> tf.Graph().as_default():
+  <span class="org-variable-name">m</span>, <span class="org-variable-name">n</span> = data[<span class="org-string">'onehot'</span>].shape
 
-<span class="org-variable-name">m</span>, <span class="org-variable-name">n</span> = data[<span class="org-string">'onehot'</span>].shape
+  <span class="org-variable-name">onehot</span> = tf.placeholder(tf.float32, [m, n])
+  <span class="org-variable-name">log_cpm</span> = tf.placeholder(tf.float32, [m, 1])
+  <span class="org-variable-name">library_size</span> = tf.placeholder(tf.float32, [m, 1])
 
-<span class="org-variable-name">onehot</span> = tf.placeholder(tf.float32, [m, n])
-<span class="org-variable-name">eta0</span> = ed.models.Normal(loc=tf.zeros([n, 1]), scale=tf.ones([n, 1]))
-<span class="org-variable-name">eta1</span> = ed.models.Normal(loc=tf.zeros([n, 1]), scale=tf.ones([n, 1]))
-<span class="org-variable-name">log_cpm</span> = ed.models.Normal(
-  loc=tf.matmul(onehot, tf.exp(eta0)),
-  scale=tf.sqrt(tf.matmul(onehot, tf.exp(-eta0) + tf.exp(eta1))))
+  <span class="org-variable-name">log_rate</span> = tf.get_variable(<span class="org-string">'mean'</span>, [n, 1])
+  <span class="org-variable-name">bias</span> = library_size + 6 * tf.log(10.)
+  <span class="org-variable-name">mean</span> = tf.matmul(onehot, log_rate) + bias
 
-<span class="org-variable-name">q_eta0</span> = ed.models.Normal(loc=tf.Variable(tf.zeros([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
-<span class="org-variable-name">q_eta1</span> = ed.models.Normal(loc=tf.Variable(tf.zeros([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
+  <span class="org-variable-name">disp</span> = tf.get_variable(<span class="org-string">'disp'</span>, [n, 1])
+  <span class="org-variable-name">var</span> = tf.exp(mean) + tf.matmul(onehot, tf.exp(disp))
+
+  <span class="org-variable-name">llik</span> = .5 * tf.reduce_sum(-tf.log(var) - tf.log(tf.constant(2 * np.pi)) - tf.square(log_cpm - mean) / var) 
+
+  <span class="org-variable-name">opt</span> = [log_rate, disp]
+
+  <span class="org-variable-name">train</span> = tf.train.RMSPropOptimizer(learning_rate=5e-3).minimize(-llik)
+
+  <span class="org-keyword">with</span> tf.Session() <span class="org-keyword">as</span> sess:
+    sess.run(tf.global_variables_initializer())
+    <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-builtin">range</span>(3000):
+      <span class="org-variable-name">_</span>, <span class="org-variable-name">update</span> = sess.run([train, llik], 
+                           {onehot: data[<span class="org-string">'onehot'</span>],
+                            library_size: data[<span class="org-string">'normalizers'</span>],
+                            log_cpm: data[<span class="org-string">'log_cpm'</span>]})
+      <span class="org-keyword">if</span> <span class="org-keyword">not</span> i % 500:
+        <span class="org-keyword">print</span>(update)
+    <span class="org-variable-name">estimates</span> = sess.run(opt)
 </pre>
 </div>
 
-<div class="org-src-container">
-<pre class="src src-ipython"><span class="org-variable-name">inf</span> = ed.ReparameterizationKLqp(
-  latent_vars={eta0: q_eta0, eta1: q_eta1},
-  data={onehot: data[<span class="org-string">'onehot'</span>], log_cpm: data[<span class="org-string">'log_cpm'</span>]})
-inf.run(n_samples=10, optimizer=tf.train.AdamOptimizer(learning_rate=5e-3))
-</pre>
-</div>
-
-<pre class="example">
-1000/1000 [100%] ██████████████████████████████ Elapsed: 8s | Loss: 4948.953
-
-</pre>
-
-<div class="org-src-container">
-<pre class="src src-ipython">pd.DataFrame(
-  np.hstack(ed.get_session().run([q_eta0.mean(), q_eta0.variance(), q_eta1.mean(), q_eta1.variance()])),
-  columns=[<span class="org-string">'eta0_mean'</span>, <span class="org-string">'eta0_var'</span>, <span class="org-string">'eta1_mean'</span>, <span class="org-string">'eta1_var'</span>])
-</pre>
-</div>
-
-<pre class="example">
-  eta0_mean  eta0_var  eta1_mean  eta1_var
-0    0.134668  0.587063   1.774024  0.155157
-1    0.865564  0.288437   1.891148  0.037003
-2    0.336732  0.608907   2.205442  0.021856
-3    0.023808  0.637865   1.475013  0.048397
-4    0.560011  0.409512   1.824579  0.040784
-5   -0.088260  0.612847   1.317034  0.277709
-6    0.418118  0.561308   2.237652  0.017574
-7    0.277662  0.595737   2.064718  0.025858
-8   -0.126591  0.609919   1.014545  0.251775
-9    0.602666  0.441734   2.065972  0.032605
-10   0.077610  0.677382   1.875362  0.048096
-11  -0.022883  0.659982   1.401854  0.181760
-12   0.141997  0.699906   2.073957  0.070775
-13  -0.054175  0.711434   1.291426  0.325011
-14   0.050481  0.705741   1.764009  0.138111
-15   0.369330  0.574703   2.174503  0.022635
-16   0.700163  0.458168   2.124360  0.071042
-17   0.594862  0.436958   1.999896  0.026416
-18   1.027588  0.208037   1.733976  0.119377
-19   0.095099  0.707778   1.838709  0.032868
-20  -0.008542  0.718278   1.828956  0.107599
-</pre>
+<p>
+-4840.49
+-4403.58
+-4401.74
+-4401.57
+-4401.56
+-4401.56
+</p>
 </div>
 </div>
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2017-12-14 Thu 20:33</p>
+<p class="date">Created: 2017-12-15 Fri 10:23</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>

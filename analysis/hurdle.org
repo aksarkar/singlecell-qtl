@@ -102,13 +102,14 @@
   #+CALL: ipython3(venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 41429070
+  : Submitted batch job 41436690
 
   #+BEGIN_SRC ipython
     import edward as ed
     import functools
     import gzip
     import os.path
+    import matplotlib.pyplot as plt
     import numpy as np
     import pandas as pd
     import pickle
@@ -149,6 +150,16 @@
   #+CALL: onehot-qc()
 
   #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+NAME: reset
+  #+BEGIN_SRC ipython
+    tf.reset_default_graph()
+    ed.get_session().close()
+  #+END_SRC
+
+  #+RESULTS: reset
   :RESULTS:
   :END:
 
@@ -239,7 +250,114 @@
   :RESULTS:
   :END:
 
+* Edward sanity check                                              :noexport:
+
+  #+CALL: reset()
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+BEGIN_SRC ipython
+    m, _ = data['onehot'].shape
+    n, p = data['genotypes'].shape
+
+    x = tf.placeholder(tf.float32, [n, p])
+    a = tf.placeholder(tf.float32, [m, n])
+    beta = ed.models.Normal(loc=tf.zeros([p, 1]), scale=tf.ones([1]))
+    y = ed.models.Normal(loc=tf.matmul(a, tf.matmul(x, beta)), scale=1.)
+
+    q_beta = ed.models.NormalWithSoftplusScale(loc=tf.Variable(tf.zeros([p, 1])), scale=tf.Variable(tf.ones([1])))
+
+    inf = ed.ReparameterizationKLqp(
+      latent_vars={beta: q_beta},
+      data={y: np.random.normal(size=(m, 1)).astype(np.float32),
+            x: data['genotypes'],
+            a: data['onehot']})
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+BEGIN_SRC ipython 
+    inf.run(optimizer=tf.train.GradientDescentOptimizer(learning_rate=1e-6))
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  : 1000/1000 [100%] ██████████████████████████████ Elapsed: 1s | Loss: 11070.640
+  :END:
+
+* ML sanity check
+  
+  #+BEGIN_SRC ipython
+    with open('test_data.pkl', 'rb') as f:
+      data = pickle.load(f)
+
+    data['log_cpm'] = np.log(data['counts'] + 1) + data['normalizers'] + 6 * np.log(10)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+CALL: reset()
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+BEGIN_SRC ipython :results output
+    with tf.Graph().as_default():
+      m, n = data['onehot'].shape
+
+      onehot = tf.placeholder(tf.float32, [m, n])
+      log_cpm = tf.placeholder(tf.float32, [m, 1])
+      library_size = tf.placeholder(tf.float32, [m, 1])
+
+      log_rate = tf.get_variable('mean', [n, 1])
+      bias = library_size + 6 * tf.log(10.)
+      mean = tf.matmul(onehot, log_rate) + bias
+
+      disp = tf.get_variable('disp', [n, 1])
+      var = tf.exp(mean) + tf.matmul(onehot, tf.exp(disp))
+
+      llik = .5 * tf.reduce_sum(-tf.log(var) - tf.log(tf.constant(2 * np.pi)) - tf.square(log_cpm - mean) / var) 
+
+      opt = [log_rate, disp]
+
+      train = tf.train.RMSPropOptimizer(learning_rate=5e-3).minimize(-llik)
+
+      with tf.Session() as sess:
+        sess.run(tf.global_variables_initializer())
+        for i in range(3000):
+          _, update = sess.run([train, llik], 
+                               {onehot: data['onehot'],
+                                library_size: data['normalizers'],
+                                log_cpm: data['log_cpm']})
+          if not i % 500:
+            print(update)
+        estimates = sess.run(opt)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  -4840.49
+  -4403.58
+  -4401.74
+  -4401.57
+  -4401.56
+  -4401.56
+  :END:
+
 * Voom component
+
+  #+CALL: reset()
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
 
   #+BEGIN_SRC ipython
     with open('test_data.pkl', 'rb') as f:
@@ -253,68 +371,64 @@
   :END:
 
   #+BEGIN_SRC ipython
-    tf.reset_default_graph()
-    ed.get_session().close()
-
     m, n = data['onehot'].shape
+    _, p = data['genotypes'].shape
 
     onehot = tf.placeholder(tf.float32, [m, n])
-    eta0 = ed.models.Normal(loc=tf.zeros([n, 1]), scale=tf.ones([n, 1]))
-    eta1 = ed.models.Normal(loc=tf.zeros([n, 1]), scale=tf.ones([n, 1]))
+    genotypes = tf.placeholder(tf.float32, [n, p])
+
+    mean_effect = ed.models.Normal(loc=tf.zeros([p, 1]), scale=tf.ones([p, 1]))
+    disp_effect = ed.models.Normal(loc=tf.zeros([n, 1]), scale=tf.ones([n, 1]))
+
+    eta0 = tf.matmul(onehot, tf.matmul(genotypes, mean_effect))
+    eta1 = tf.matmul(onehot, disp_effect)
+
     log_cpm = ed.models.Normal(
-      loc=tf.matmul(onehot, tf.exp(eta0)),
-      scale=tf.sqrt(tf.matmul(onehot, tf.exp(-eta0) + tf.exp(eta1))))
+      loc=tf.exp(eta0),
+      scale=tf.sqrt(tf.exp(-eta0) + tf.exp(eta1)))
 
-    q_eta0 = ed.models.Normal(loc=tf.Variable(tf.zeros([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
-    q_eta1 = ed.models.Normal(loc=tf.Variable(tf.zeros([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  :END:
-
-  #+BEGIN_SRC ipython 
+    q_mean_effect = ed.models.Normal(loc=tf.Variable(tf.zeros([p, 1])), scale=tf.Variable(tf.ones([p, 1])))
+    q_disp_effect = ed.models.Normal(loc=tf.Variable(tf.zeros([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
     inf = ed.ReparameterizationKLqp(
-      latent_vars={eta0: q_eta0, eta1: q_eta1},
-      data={onehot: data['onehot'], log_cpm: data['log_cpm']})
-    inf.run(n_samples=10, optimizer=tf.train.AdamOptimizer(learning_rate=5e-3))
+      latent_vars={mean_effect: q_mean_effect, disp_effect: q_disp_effect},
+      data={onehot: data['onehot'], log_cpm: data['log_cpm'], genotypes: data['genotypes']})
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  : 1000/1000 [100%] ██████████████████████████████ Elapsed: 8s | Loss: 4948.953
   :END:
 
   #+BEGIN_SRC ipython
-    pd.DataFrame(
+    inf.run(n_samples=10, optimizer=tf.train.AdamOptimizer(learning_rate=1e-8))
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+BEGIN_SRC ipython
+    res = pd.DataFrame(
       np.hstack(ed.get_session().run([q_eta0.mean(), q_eta0.variance(), q_eta1.mean(), q_eta1.variance()])),
       columns=['eta0_mean', 'eta0_var', 'eta1_mean', 'eta1_var'])
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  #+BEGIN_EXAMPLE
-      eta0_mean  eta0_var  eta1_mean  eta1_var
-    0    0.134668  0.587063   1.774024  0.155157
-    1    0.865564  0.288437   1.891148  0.037003
-    2    0.336732  0.608907   2.205442  0.021856
-    3    0.023808  0.637865   1.475013  0.048397
-    4    0.560011  0.409512   1.824579  0.040784
-    5   -0.088260  0.612847   1.317034  0.277709
-    6    0.418118  0.561308   2.237652  0.017574
-    7    0.277662  0.595737   2.064718  0.025858
-    8   -0.126591  0.609919   1.014545  0.251775
-    9    0.602666  0.441734   2.065972  0.032605
-    10   0.077610  0.677382   1.875362  0.048096
-    11  -0.022883  0.659982   1.401854  0.181760
-    12   0.141997  0.699906   2.073957  0.070775
-    13  -0.054175  0.711434   1.291426  0.325011
-    14   0.050481  0.705741   1.764009  0.138111
-    15   0.369330  0.574703   2.174503  0.022635
-    16   0.700163  0.458168   2.124360  0.071042
-    17   0.594862  0.436958   1.999896  0.026416
-    18   1.027588  0.208037   1.733976  0.119377
-    19   0.095099  0.707778   1.838709  0.032868
-    20  -0.008542  0.718278   1.828956  0.107599
-  #+END_EXAMPLE
+  :END:
+
+  #+BEGIN_SRC ipython :ipyfile figures/hurdle.org/voom-posterior-mean.png
+    plt.clf()
+    fig, ax = plt.subplots(2, 1, sharex=True)
+    ax[0].errorbar(x=np.arange(len(res)), y=res['eta0_mean'], yerr=1.96 * np.sqrt(res['eta0_var']), marker='o')
+    ax[0].set_xticks([])
+    ax[0].set_ylabel('Latent mean')
+    ax[1].errorbar(x=np.arange(len(res)), y=res['eta1_mean'], yerr=1.96 * np.sqrt(res['eta1_var']), marker='o')
+    ax[1].set_ylabel('Latent variance')
+    ax[1].set_xlabel('Individual')
+    fig
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  [[file:figures/hurdle.org/voom-posterior-mean.png]]
   :END:
