@@ -308,47 +308,73 @@
   :RESULTS:
   :END:
 
-  #+BEGIN_SRC ipython :results output
+  #+BEGIN_SRC ipython
     with tf.Graph().as_default():
       m, n = data['onehot'].shape
 
       onehot = tf.placeholder(tf.float32, [m, n])
+      genotypes = tf.placeholder(tf.float32, [n, 1])
       log_cpm = tf.placeholder(tf.float32, [m, 1])
       library_size = tf.placeholder(tf.float32, [m, 1])
 
-      log_rate = tf.get_variable('mean', [n, 1])
-      bias = library_size + 6 * tf.log(10.)
-      mean = tf.matmul(onehot, log_rate) + bias
+      with tf.variable_scope('params', initializer=tf.zeros_initializer):
+        mean_effect = tf.get_variable('mean', [1, 1])
+        log_rate = tf.matmul(genotypes, mean_effect)
+        cell_bias = library_size + 6 * tf.log(10.)
+        mean = tf.matmul(onehot, log_rate) + cell_bias
 
-      disp = tf.get_variable('disp', [n, 1])
-      var = tf.exp(mean) + tf.matmul(onehot, tf.exp(disp))
+        disp_effect = tf.get_variable('disp', [1, 1])
+        disp = tf.matmul(genotypes, disp_effect)
+        resid = tf.get_variable('resid', [1, 1])
+        var = tf.exp(-mean) + tf.matmul(onehot, tf.exp(disp)) + tf.exp(resid)
 
       llik = .5 * tf.reduce_sum(-tf.log(var) - tf.log(tf.constant(2 * np.pi)) - tf.square(log_cpm - mean) / var) 
 
-      opt = [log_rate, disp]
+      opt = [mean_effect, disp_effect, tf.exp(resid)]
 
-      train = tf.train.RMSPropOptimizer(learning_rate=5e-3).minimize(-llik)
+      train = tf.train.RMSPropOptimizer(learning_rate=1e-2).minimize(-llik)
+
+      feed_dict = {genotypes: data['genotypes'][:,0:1],
+                   onehot: data['onehot'],
+                   library_size: data['normalizers'],
+                   log_cpm: data['log_cpm']}
 
       with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
+        curr_llik = float('-inf')
         for i in range(3000):
-          _, update = sess.run([train, llik], 
-                               {onehot: data['onehot'],
-                                library_size: data['normalizers'],
-                                log_cpm: data['log_cpm']})
-          if not i % 500:
-            print(update)
+          _, update = sess.run([train, llik], feed_dict)
+          if np.isclose(update, curr_llik):
+            print('Converged after {} epochs'.format(i))
+            break
+          else:
+            curr_llik = update
         estimates = sess.run(opt)
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  -4840.49
-  -4403.58
-  -4401.74
-  -4401.57
-  -4401.56
-  -4401.56
+  :END:
+
+  #+BEGIN_SRC ipython
+    curr_llik
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  : -3191.2041
+  :END:
+
+  #+BEGIN_SRC ipython
+    pd.DataFrame(np.hstack(estimates), columns=['mean_effect', 'disp_effect', 'resid'])
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  #+BEGIN_EXAMPLE
+     mean_effect  disp_effect    resid
+    0     0.413716    -1.031514  0.87242
+  #+END_EXAMPLE
   :END:
 
 * Voom component
@@ -375,23 +401,37 @@
     _, p = data['genotypes'].shape
 
     onehot = tf.placeholder(tf.float32, [m, n])
-    genotypes = tf.placeholder(tf.float32, [n, p])
+    genotypes = tf.placeholder(tf.float32, [n, 1])
+    library_size = tf.placeholder(tf.float32, [m, 1])
 
-    mean_effect = ed.models.Normal(loc=tf.zeros([p, 1]), scale=tf.ones([p, 1]))
-    disp_effect = ed.models.Normal(loc=tf.zeros([n, 1]), scale=tf.ones([n, 1]))
+    ind_bias = ed.models.Normal(loc=tf.zeros([n, 1]), scale=tf.Variable(tf.ones([n, 1])))
+    cell_bias = library_size + 6 * tf.log(10.)
+    rate_effect = ed.models.Normal(loc=tf.zeros([1, 1]), scale=tf.ones([1, 1]))
+    log_rate = tf.matmul(onehot, tf.matmul(genotypes, rate_effect) + ind_bias)
+    mean = log_rate + cell_bias
 
-    eta0 = tf.matmul(onehot, tf.matmul(genotypes, mean_effect))
-    eta1 = tf.matmul(onehot, disp_effect)
+    disp_effect = ed.models.Normal(loc=tf.zeros([1, 1]), scale=tf.ones([1, 1]))
+    disp = tf.matmul(onehot, tf.matmul(genotypes, disp_effect))
+    var = tf.exp(-log_rate) + tf.exp(disp) + tf.exp(tf.Variable(tf.zeros([1])))
 
-    log_cpm = ed.models.Normal(
-      loc=tf.exp(eta0),
-      scale=tf.sqrt(tf.exp(-eta0) + tf.exp(eta1)))
+    log_cpm = ed.models.Normal(loc=mean, scale=tf.sqrt(var))
 
-    q_mean_effect = ed.models.Normal(loc=tf.Variable(tf.zeros([p, 1])), scale=tf.Variable(tf.ones([p, 1])))
-    q_disp_effect = ed.models.Normal(loc=tf.Variable(tf.zeros([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
-    inf = ed.ReparameterizationKLqp(
-      latent_vars={mean_effect: q_mean_effect, disp_effect: q_disp_effect},
-      data={onehot: data['onehot'], log_cpm: data['log_cpm'], genotypes: data['genotypes']})
+    q_ind_bias = ed.models.Normal(loc=tf.Variable(tf.zeros([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
+    q_rate_effect = ed.models.Normal(loc=tf.Variable(tf.random_normal([1, 1])), scale=tf.Variable(tf.random_normal([1, 1])))
+    q_disp_effect = ed.models.Normal(loc=tf.Variable(tf.zeros([1, 1])), scale=tf.Variable(tf.ones([1, 1])))
+
+    inf = ed.ReparameterizationKLKLqp(
+      latent_vars={
+        rate_effect: q_rate_effect,
+        ind_bias: q_ind_bias,
+        disp_effect: q_disp_effect,
+      },
+      data={
+        onehot: data['onehot'],
+        genotypes: data['genotypes'][:,0:1],
+        library_size: -data['normalizers'],
+        log_cpm: data['log_cpm'],
+      })
   #+END_SRC
 
   #+RESULTS:
@@ -399,7 +439,7 @@
   :END:
 
   #+BEGIN_SRC ipython
-    inf.run(n_samples=10, optimizer=tf.train.AdamOptimizer(learning_rate=1e-8))
+    inf.run(n_samples=10, optimizer=tf.train.AdamOptimizer(learning_rate=5e-2))
   #+END_SRC
 
   #+RESULTS:
@@ -408,27 +448,22 @@
 
   #+BEGIN_SRC ipython
     res = pd.DataFrame(
-      np.hstack(ed.get_session().run([q_eta0.mean(), q_eta0.variance(), q_eta1.mean(), q_eta1.variance()])),
-      columns=['eta0_mean', 'eta0_var', 'eta1_mean', 'eta1_var'])
+      np.hstack(ed.get_session().run([q_rate_effect.mean(), q_rate_effect.variance(), q_disp_effect.mean(), q_disp_effect.variance()])),
+      columns=['rate_effect_mean', 'rate_effect_var', 'disp_effect_mean', 'disp_effect_var'])
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
   :END:
 
-  #+BEGIN_SRC ipython :ipyfile figures/hurdle.org/voom-posterior-mean.png
-    plt.clf()
-    fig, ax = plt.subplots(2, 1, sharex=True)
-    ax[0].errorbar(x=np.arange(len(res)), y=res['eta0_mean'], yerr=1.96 * np.sqrt(res['eta0_var']), marker='o')
-    ax[0].set_xticks([])
-    ax[0].set_ylabel('Latent mean')
-    ax[1].errorbar(x=np.arange(len(res)), y=res['eta1_mean'], yerr=1.96 * np.sqrt(res['eta1_var']), marker='o')
-    ax[1].set_ylabel('Latent variance')
-    ax[1].set_xlabel('Individual')
-    fig
+  #+BEGIN_SRC ipython
+    res
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  [[file:figures/hurdle.org/voom-posterior-mean.png]]
+  #+BEGIN_EXAMPLE
+     rate_effect_mean  rate_effect_var  disp_effect_mean  disp_effect_var
+    0         -0.373444         0.003591         -2.677538         6.434384
+  #+END_EXAMPLE
   :END:

@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2017-12-15 Fri 10:23 -->
+<!-- 2017-12-15 Fri 12:11 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hurdle model estimation</title>
@@ -227,6 +227,28 @@ for the JavaScript code in this tag.
  }
 /*]]>*///-->
 </script>
+<script type="text/x-mathjax-config">
+    MathJax.Hub.Config({
+        displayAlign: "center",
+        displayIndent: "0em",
+
+        "HTML-CSS": { scale: 100,
+                        linebreaks: { automatic: "false" },
+                        webFont: "TeX"
+                       },
+        SVG: {scale: 100,
+              linebreaks: { automatic: "false" },
+              font: "TeX"},
+        NativeMML: {scale: 100},
+        TeX: { equationNumbers: {autoNumber: "AMS"},
+               MultLineWidth: "85%",
+               TagSide: "right",
+               TagIndent: ".8em"
+             }
+});
+</script>
+<script type="text/javascript"
+        src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.0/MathJax.js?config=TeX-AMS_HTML"></script>
 </head>
 <body>
 <div id="content">
@@ -235,10 +257,230 @@ for the JavaScript code in this tag.
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents">
 <ul>
+<li><a href="#org0996a64">Introduction</a></li>
+<li><a href="#org8676b15">Test case</a></li>
 <li><a href="#org3de8c5e">ML sanity check</a></li>
+<li><a href="#org6ed67d5">Voom component</a></li>
 </ul>
 </div>
 </div>
+
+<div id="outline-container-org0996a64" class="outline-2">
+<h2 id="org0996a64">Introduction</h2>
+<div class="outline-text-2" id="text-org0996a64">
+<p>
+The key idea of <code>voom</code> (<a href="http://genomebiology.com/2014/15/2/R29">Law et al 2014</a>) is that the distribution of \(Y =
+  \log_2(\mathrm{CPM} + 1)\) is approximately Gaussian. For simplicity,
+consider one gene in one cell.
+</p>
+
+<p>
+\[ R = \mbox{number of reads} \]
+</p>
+
+<p>
+Assuming \(R\) follows the NB2 negative binomial model (Hilbe 2012):
+</p>
+
+<p>
+\[ E[R] = \lambda \]
+\[ V[R] = \lambda + \phi \lambda^2 \]
+</p>
+
+<p>
+By the definition of CPM:
+</p>
+
+<p>
+\[ Y = \log_2(R) + \mathrm{const} \]
+</p>
+
+<p>
+By first order Taylor expansion:
+</p>
+
+<p>
+\[ E[Y] = \mu \approx \log_2 \lambda + \mathrm{const} \]
+</p>
+
+<p>
+By the delta method:
+</p>
+
+<p>
+\[ V[Y] = \sigma^2 \approx V[R] / \lambda^2 = 1/\lambda + \phi \]
+</p>
+
+<p>
+The key idea of <code>mast</code> (<a href="https://dx.doi.org/10.1186/s13059-015-0844-5">Finak et al 2015</a>) is to model non-zero \(R\) using a
+Gaussian distribution, and model zero \(R\) using logistic regression. The
+key distinction between this approach and the <a href="zinb.html">zero-inflated
+negative binomial model</a> is that zeroes are assumed to arise from only one
+process.
+</p>
+
+<p>
+This naturally suggests a Bayesian model which simultaneously calls mean and
+variance QTLs based on the likelihood:
+</p>
+
+<p>
+\[ Y \mid Y = 0 \sim \mathrm{Bernoulli}(1 - \mathrm{sigmoid}(AX\theta_m + \delta)) \]
+</p>
+
+<p>
+\[ Y \mid Y > 0 \sim N(AX\theta_m + \delta, \exp(-AX\theta_m - \delta) +
+  \exp(AX\theta_v) + \sigma^2) \]
+</p>
+
+<p>
+where \(\delta\) is a known constant that depends on library size, \(A\) maps
+from cells to individuals, and \(X\) is the genotype matrix.
+</p>
+
+<p>
+The key issues are:
+</p>
+
+<ol class="org-ol">
+<li><p>
+<b>Is it possible to develop an individual-level model?</b> An alternative
+model would be to estimate a variance for each individual, and then plug
+into existing QTL mapping software. This approach is naturally suggested
+by the <code>voom</code> approximation, but it is not obvious that the approach will
+generalize to zero-inflated data.
+</p>
+
+<p>
+Fitting the proposed model will require writing new software as opposed to
+plugging into existing software. We previously built an efficient
+algorithm and inference engine to build these kind of models (<a href="https://www.biorxiv.org/content/early/2017/02/10/107623">Park et al
+2017</a>), but it has one major issue: it is computationally expensive to
+perform statistical tests on the fitted models because the approximate
+Bayesian inferences underestimate the uncertainty in the estimated values.
+</p></li>
+
+<li><p>
+<b>Do we need to actually fit the dropout model?</b> <code>mast</code> conditions on the
+observed \(Y = 0\), not on a latent \(Z = 0\), which means we could simply
+do the same and ignore zeros.
+</p>
+
+<p>
+If we did so, then mean/variance QTL effect size estimation will be less
+robust for genes with high dropout. This might not be a problem depending
+on the stringency of gene filtering.
+</p></li>
+
+<li><p>
+<b>For a single gene, do we need to worry about mean QTLs in LD with
+variance QTLs?</b> We previously <a href="https://github.com/YPARK/fqtl">built multivariate mean/variance QTL models</a>
+which could account for LD, and could share information between the mean
+and variance models.
+</p>
+
+<p>
+The fundamental problem is that if we assume that the mean and dispersion
+both have genetic components, then the mean is no longer independent of
+the dispersion.
+</p>
+
+<p>
+This actually could be derived without using the fact that both depend on
+the same genotypes if we use second-order Taylor expansion:
+</p>
+
+<p>
+\[ \mu \approx \log_2 \lambda + \frac{V[R]}{2 \lambda^2} \]
+</p></li>
+
+<li><p>
+<b>Do we need to share parameters between genes?</b> <code>mast</code> assumes genes are
+conditionally independent. But this is no longer true when nearby genes
+can be driven by overlapping (or correlated) <i>cis</i>-genotypes.
+</p>
+
+<p>
+We previously developed multiresponse QTL models which learned the target
+genes of causal variants, allowing the true target gene to explain away
+nearby correlated genes (<a href="https://www.biorxiv.org/content/early/2017/11/14/219428">Park et al 2017</a>).
+</p></li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-org8676b15" class="outline-2">
+<h2 id="org8676b15">Test case</h2>
+<div class="outline-text-2" id="text-org8676b15">
+<pre class="example">
+                chr      start        end      name strand      source
+gene                                                                    
+ENSG00000000419  hs20   49551404   49575092      DPM1      -  H. sapiens
+ENSG00000000457   hs1  169818772  169863408     SCYL3      -  H. sapiens
+ENSG00000000460   hs1  169631245  169823221  C1orf112      +  H. sapiens
+ENSG00000000938   hs1   27938575   27961788       FGR      -  H. sapiens
+ENSG00000000971   hs1  196621008  196716634       CFH      +  H. sapiens
+</pre>
+
+<div class="org-src-container">
+<pre class="src src-ipython">gene_info.query(<span class="org-string">'name == "ZSWIM7"'</span>)
+</pre>
+</div>
+
+<pre class="example">
+                chr     start       end    name strand      source
+gene                                                                
+ENSG00000214941  hs17  15879874  15903031  ZSWIM7      -  H. sapiens
+</pre>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-keyword">with</span> gzip.<span class="org-builtin">open</span>(<span class="org-string">'/project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz'</span>, <span class="org-string">'rt'</span>) <span class="org-keyword">as</span> f:
+  <span class="org-variable-name">header</span> = <span class="org-builtin">next</span>(f).split()
+<span class="org-variable-name">vcf</span> = tabix.<span class="org-builtin">open</span>(<span class="org-string">'/project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz'</span>)
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-keyword">def</span> <span class="org-function-name">_extract_genotypes</span>(row, vcf, header, window):
+  <span class="org-keyword">if</span> row[<span class="org-string">'strand'</span>] == <span class="org-string">'+'</span>:
+    <span class="org-variable-name">start</span> = row[<span class="org-string">'start'</span>] - window
+    <span class="org-variable-name">end</span> = row[<span class="org-string">'start'</span>]
+  <span class="org-keyword">else</span>:
+    <span class="org-variable-name">start</span> = row[<span class="org-string">'end'</span>]
+    <span class="org-variable-name">end</span> = row[<span class="org-string">'end'</span>] + window
+  <span class="org-variable-name">result</span> = pd.DataFrame(<span class="org-builtin">list</span>(vcf.query(<span class="org-string">'chr{}'</span>.<span class="org-builtin">format</span>(row[<span class="org-string">'chr'</span>][2:]), start, end)), columns=header).iloc[:,9:].astype(np.float32)
+  <span class="org-keyword">return</span> result
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">genotypes</span> = _extract_genotypes(gene_info.loc[<span class="org-string">'ENSG00000214941'</span>], vcf=vcf, header=header, window=<span class="org-builtin">int</span>(1e6)).rename(columns=<span class="org-keyword">lambda</span> x: <span class="org-string">'NA{}'</span>.<span class="org-builtin">format</span>(x))[<span class="org-builtin">sorted</span>(annotations_qc[<span class="org-string">'chip_id'</span>].unique())]
+<span class="org-variable-name">genotypes</span> = genotypes.T.transform(<span class="org-keyword">lambda</span> x: x - x.mean()).fillna(0)
+genotypes.shape
+</pre>
+</div>
+
+<pre class="example">
+(21, 2506)
+
+</pre>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">data</span> = {<span class="org-string">'onehot'</span>: onehot,
+        <span class="org-string">'genotypes'</span>: genotypes.values,
+        <span class="org-string">'counts'</span>: umi_qc.loc[<span class="org-string">'ENSG00000214941'</span>].values.astype(np.float32).reshape(-1, 1),
+        <span class="org-string">'normalizers'</span>: -np.log(umi_qc.agg(np.<span class="org-builtin">sum</span>)).values.reshape(-1, 1)}
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-keyword">with</span> <span class="org-builtin">open</span>(<span class="org-string">'test_data.pkl'</span>, <span class="org-string">'wb'</span>) <span class="org-keyword">as</span> f:
+  pickle.dump(data, f)
+</pre>
+</div>
+</div>
+</div>
+
 <div id="outline-container-org3de8c5e" class="outline-2">
 <h2 id="org3de8c5e">ML sanity check</h2>
 <div class="outline-text-2" id="text-org3de8c5e">
@@ -255,49 +497,145 @@ for the JavaScript code in this tag.
   <span class="org-variable-name">m</span>, <span class="org-variable-name">n</span> = data[<span class="org-string">'onehot'</span>].shape
 
   <span class="org-variable-name">onehot</span> = tf.placeholder(tf.float32, [m, n])
+  <span class="org-variable-name">genotypes</span> = tf.placeholder(tf.float32, [n, 1])
   <span class="org-variable-name">log_cpm</span> = tf.placeholder(tf.float32, [m, 1])
   <span class="org-variable-name">library_size</span> = tf.placeholder(tf.float32, [m, 1])
 
-  <span class="org-variable-name">log_rate</span> = tf.get_variable(<span class="org-string">'mean'</span>, [n, 1])
-  <span class="org-variable-name">bias</span> = library_size + 6 * tf.log(10.)
-  <span class="org-variable-name">mean</span> = tf.matmul(onehot, log_rate) + bias
+  <span class="org-keyword">with</span> tf.variable_scope(<span class="org-string">'params'</span>, initializer=tf.zeros_initializer):
+    <span class="org-variable-name">mean_effect</span> = tf.get_variable(<span class="org-string">'mean'</span>, [1, 1])
+    <span class="org-variable-name">log_rate</span> = tf.matmul(genotypes, mean_effect)
+    <span class="org-variable-name">cell_bias</span> = library_size + 6 * tf.log(10.)
+    <span class="org-variable-name">mean</span> = tf.matmul(onehot, log_rate) + cell_bias
 
-  <span class="org-variable-name">disp</span> = tf.get_variable(<span class="org-string">'disp'</span>, [n, 1])
-  <span class="org-variable-name">var</span> = tf.exp(mean) + tf.matmul(onehot, tf.exp(disp))
+    <span class="org-variable-name">disp_effect</span> = tf.get_variable(<span class="org-string">'disp'</span>, [1, 1])
+    <span class="org-variable-name">disp</span> = tf.matmul(genotypes, disp_effect)
+    <span class="org-variable-name">resid</span> = tf.get_variable(<span class="org-string">'resid'</span>, [1, 1])
+    <span class="org-variable-name">var</span> = tf.exp(-mean) + tf.matmul(onehot, tf.exp(disp)) + tf.exp(resid)
 
   <span class="org-variable-name">llik</span> = .5 * tf.reduce_sum(-tf.log(var) - tf.log(tf.constant(2 * np.pi)) - tf.square(log_cpm - mean) / var) 
 
-  <span class="org-variable-name">opt</span> = [log_rate, disp]
+  <span class="org-variable-name">opt</span> = [mean_effect, disp_effect, tf.exp(resid)]
 
-  <span class="org-variable-name">train</span> = tf.train.RMSPropOptimizer(learning_rate=5e-3).minimize(-llik)
+  <span class="org-variable-name">train</span> = tf.train.RMSPropOptimizer(learning_rate=1e-2).minimize(-llik)
+
+  <span class="org-variable-name">feed_dict</span> = {genotypes: data[<span class="org-string">'genotypes'</span>][:,0:1],
+               onehot: data[<span class="org-string">'onehot'</span>],
+               library_size: data[<span class="org-string">'normalizers'</span>],
+               log_cpm: data[<span class="org-string">'log_cpm'</span>]}
 
   <span class="org-keyword">with</span> tf.Session() <span class="org-keyword">as</span> sess:
     sess.run(tf.global_variables_initializer())
+    <span class="org-variable-name">curr_llik</span> = <span class="org-builtin">float</span>(<span class="org-string">'-inf'</span>)
     <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-builtin">range</span>(3000):
-      <span class="org-variable-name">_</span>, <span class="org-variable-name">update</span> = sess.run([train, llik], 
-                           {onehot: data[<span class="org-string">'onehot'</span>],
-                            library_size: data[<span class="org-string">'normalizers'</span>],
-                            log_cpm: data[<span class="org-string">'log_cpm'</span>]})
-      <span class="org-keyword">if</span> <span class="org-keyword">not</span> i % 500:
-        <span class="org-keyword">print</span>(update)
+      <span class="org-variable-name">_</span>, <span class="org-variable-name">update</span> = sess.run([train, llik], feed_dict)
+      <span class="org-keyword">if</span> np.isclose(update, curr_llik):
+        <span class="org-keyword">print</span>(<span class="org-string">'Converged after {} epochs'</span>.<span class="org-builtin">format</span>(i))
+        <span class="org-keyword">break</span>
+      <span class="org-keyword">else</span>:
+        <span class="org-variable-name">curr_llik</span> = update
     <span class="org-variable-name">estimates</span> = sess.run(opt)
 </pre>
 </div>
 
-<p>
--4840.49
--4403.58
--4401.74
--4401.57
--4401.56
--4401.56
-</p>
+<div class="org-src-container">
+<pre class="src src-ipython">curr_llik
+</pre>
+</div>
+
+<pre class="example">
+-3191.2041
+
+</pre>
+
+<div class="org-src-container">
+<pre class="src src-ipython">pd.DataFrame(np.hstack(estimates), columns=[<span class="org-string">'mean_effect'</span>, <span class="org-string">'disp_effect'</span>, <span class="org-string">'resid'</span>])
+</pre>
+</div>
+
+<pre class="example">
+ mean_effect  disp_effect    resid
+0     0.413716    -1.031514  0.87242
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org6ed67d5" class="outline-2">
+<h2 id="org6ed67d5">Voom component</h2>
+<div class="outline-text-2" id="text-org6ed67d5">
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-keyword">with</span> <span class="org-builtin">open</span>(<span class="org-string">'test_data.pkl'</span>, <span class="org-string">'rb'</span>) <span class="org-keyword">as</span> f:
+  <span class="org-variable-name">data</span> = pickle.load(f)
+
+<span class="org-variable-name">data</span>[<span class="org-string">'log_cpm'</span>] = np.log(data[<span class="org-string">'counts'</span>] + 1) + data[<span class="org-string">'normalizers'</span>] + 6 * np.log(10)
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">m</span>, <span class="org-variable-name">n</span> = data[<span class="org-string">'onehot'</span>].shape
+<span class="org-variable-name">_</span>, <span class="org-variable-name">p</span> = data[<span class="org-string">'genotypes'</span>].shape
+
+<span class="org-variable-name">onehot</span> = tf.placeholder(tf.float32, [m, n])
+<span class="org-variable-name">genotypes</span> = tf.placeholder(tf.float32, [n, 1])
+<span class="org-variable-name">library_size</span> = tf.placeholder(tf.float32, [m, 1])
+
+<span class="org-variable-name">ind_bias</span> = ed.models.Normal(loc=tf.zeros([n, 1]), scale=tf.Variable(tf.ones([n, 1])))
+<span class="org-variable-name">cell_bias</span> = library_size + 6 * tf.log(10.)
+<span class="org-variable-name">rate_effect</span> = ed.models.Normal(loc=tf.zeros([1, 1]), scale=tf.ones([1, 1]))
+<span class="org-variable-name">log_rate</span> = tf.matmul(onehot, tf.matmul(genotypes, rate_effect) + ind_bias)
+<span class="org-variable-name">mean</span> = log_rate + cell_bias
+
+<span class="org-variable-name">disp_effect</span> = ed.models.Normal(loc=tf.zeros([1, 1]), scale=tf.ones([1, 1]))
+<span class="org-variable-name">disp</span> = tf.matmul(onehot, tf.matmul(genotypes, disp_effect))
+<span class="org-variable-name">var</span> = tf.exp(-log_rate) + tf.exp(disp) + tf.exp(tf.Variable(tf.zeros([1])))
+
+<span class="org-variable-name">log_cpm</span> = ed.models.Normal(loc=mean, scale=tf.sqrt(var))
+
+<span class="org-variable-name">q_ind_bias</span> = ed.models.Normal(loc=tf.Variable(tf.zeros([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
+<span class="org-variable-name">q_rate_effect</span> = ed.models.Normal(loc=tf.Variable(tf.random_normal([1, 1])), scale=tf.Variable(tf.random_normal([1, 1])))
+<span class="org-variable-name">q_disp_effect</span> = ed.models.Normal(loc=tf.Variable(tf.zeros([1, 1])), scale=tf.Variable(tf.ones([1, 1])))
+
+<span class="org-variable-name">inf</span> = ed.ReparameterizationKLKLqp(
+  latent_vars={
+    rate_effect: q_rate_effect,
+    ind_bias: q_ind_bias,
+    disp_effect: q_disp_effect,
+  },
+  data={
+    onehot: data[<span class="org-string">'onehot'</span>],
+    genotypes: data[<span class="org-string">'genotypes'</span>][:,0:1],
+    library_size: -data[<span class="org-string">'normalizers'</span>],
+    log_cpm: data[<span class="org-string">'log_cpm'</span>],
+  })
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-ipython">inf.run(n_samples=10, optimizer=tf.train.AdamOptimizer(learning_rate=5e-2))
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">res</span> = pd.DataFrame(
+  np.hstack(ed.get_session().run([q_rate_effect.mean(), q_rate_effect.variance(), q_disp_effect.mean(), q_disp_effect.variance()])),
+  columns=[<span class="org-string">'rate_effect_mean'</span>, <span class="org-string">'rate_effect_var'</span>, <span class="org-string">'disp_effect_mean'</span>, <span class="org-string">'disp_effect_var'</span>])
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-ipython">res
+</pre>
+</div>
+
+<pre class="example">
+ rate_effect_mean  rate_effect_var  disp_effect_mean  disp_effect_var
+0         -0.285537         0.007036         -2.565464         6.215591
+</pre>
 </div>
 </div>
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2017-12-15 Fri 10:23</p>
+<p class="date">Created: 2017-12-15 Fri 12:11</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>
