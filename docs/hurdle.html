@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2017-12-15 Fri 12:11 -->
+<!-- 2017-12-15 Fri 12:30 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hurdle model estimation</title>
@@ -257,17 +257,17 @@ for the JavaScript code in this tag.
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents">
 <ul>
-<li><a href="#org0996a64">Introduction</a></li>
-<li><a href="#org8676b15">Test case</a></li>
-<li><a href="#org3de8c5e">ML sanity check</a></li>
+<li><a href="#org3c5def5">Introduction</a></li>
+<li><a href="#org49d275c">Test case</a></li>
+<li><a href="#orga720283">ML sanity check</a></li>
 <li><a href="#org6ed67d5">Voom component</a></li>
 </ul>
 </div>
 </div>
 
-<div id="outline-container-org0996a64" class="outline-2">
-<h2 id="org0996a64">Introduction</h2>
-<div class="outline-text-2" id="text-org0996a64">
+<div id="outline-container-org3c5def5" class="outline-2">
+<h2 id="org3c5def5">Introduction</h2>
+<div class="outline-text-2" id="text-org3c5def5">
 <p>
 The key idea of <code>voom</code> (<a href="http://genomebiology.com/2014/15/2/R29">Law et al 2014</a>) is that the distribution of \(Y =
   \log_2(\mathrm{CPM} + 1)\) is approximately Gaussian. For simplicity,
@@ -409,9 +409,9 @@ nearby correlated genes (<a href="https://www.biorxiv.org/content/early/2017/11/
 </div>
 </div>
 
-<div id="outline-container-org8676b15" class="outline-2">
-<h2 id="org8676b15">Test case</h2>
-<div class="outline-text-2" id="text-org8676b15">
+<div id="outline-container-org49d275c" class="outline-2">
+<h2 id="org49d275c">Test case</h2>
+<div class="outline-text-2" id="text-org49d275c">
 <pre class="example">
                 chr      start        end      name strand      source
 gene                                                                    
@@ -481,9 +481,9 @@ genotypes.shape
 </div>
 </div>
 
-<div id="outline-container-org3de8c5e" class="outline-2">
-<h2 id="org3de8c5e">ML sanity check</h2>
-<div class="outline-text-2" id="text-org3de8c5e">
+<div id="outline-container-orga720283" class="outline-2">
+<h2 id="orga720283">ML sanity check</h2>
+<div class="outline-text-2" id="text-orga720283">
 <div class="org-src-container">
 <pre class="src src-ipython"><span class="org-keyword">with</span> <span class="org-builtin">open</span>(<span class="org-string">'test_data.pkl'</span>, <span class="org-string">'rb'</span>) <span class="org-keyword">as</span> f:
   <span class="org-variable-name">data</span> = pickle.load(f)
@@ -580,11 +580,11 @@ genotypes.shape
 
 <span class="org-variable-name">ind_bias</span> = ed.models.Normal(loc=tf.zeros([n, 1]), scale=tf.Variable(tf.ones([n, 1])))
 <span class="org-variable-name">cell_bias</span> = library_size + 6 * tf.log(10.)
-<span class="org-variable-name">rate_effect</span> = ed.models.Normal(loc=tf.zeros([1, 1]), scale=tf.ones([1, 1]))
+<span class="org-variable-name">rate_effect</span> = ed.models.Normal(loc=tf.zeros([1, 1]), scale=0.1 * tf.ones([1, 1]))
 <span class="org-variable-name">log_rate</span> = tf.matmul(onehot, tf.matmul(genotypes, rate_effect) + ind_bias)
 <span class="org-variable-name">mean</span> = log_rate + cell_bias
 
-<span class="org-variable-name">disp_effect</span> = ed.models.Normal(loc=tf.zeros([1, 1]), scale=tf.ones([1, 1]))
+<span class="org-variable-name">disp_effect</span> = ed.models.Normal(loc=tf.zeros([1, 1]), scale=0.1 * tf.ones([1, 1]))
 <span class="org-variable-name">disp</span> = tf.matmul(onehot, tf.matmul(genotypes, disp_effect))
 <span class="org-variable-name">var</span> = tf.exp(-log_rate) + tf.exp(disp) + tf.exp(tf.Variable(tf.zeros([1])))
 
@@ -592,7 +592,7 @@ genotypes.shape
 
 <span class="org-variable-name">q_ind_bias</span> = ed.models.Normal(loc=tf.Variable(tf.zeros([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
 <span class="org-variable-name">q_rate_effect</span> = ed.models.Normal(loc=tf.Variable(tf.random_normal([1, 1])), scale=tf.Variable(tf.random_normal([1, 1])))
-<span class="org-variable-name">q_disp_effect</span> = ed.models.Normal(loc=tf.Variable(tf.zeros([1, 1])), scale=tf.Variable(tf.ones([1, 1])))
+<span class="org-variable-name">q_disp_effect</span> = ed.models.Normal(loc=tf.Variable(tf.random_normal([1, 1])), scale=tf.Variable(tf.random_normal([1, 1])))
 
 <span class="org-variable-name">inf</span> = ed.ReparameterizationKLKLqp(
   latent_vars={
@@ -618,24 +618,70 @@ genotypes.shape
 <pre class="src src-ipython"><span class="org-variable-name">res</span> = pd.DataFrame(
   np.hstack(ed.get_session().run([q_rate_effect.mean(), q_rate_effect.variance(), q_disp_effect.mean(), q_disp_effect.variance()])),
   columns=[<span class="org-string">'rate_effect_mean'</span>, <span class="org-string">'rate_effect_var'</span>, <span class="org-string">'disp_effect_mean'</span>, <span class="org-string">'disp_effect_var'</span>])
-</pre>
-</div>
-
-<div class="org-src-container">
-<pre class="src src-ipython">res
+res
 </pre>
 </div>
 
 <pre class="example">
  rate_effect_mean  rate_effect_var  disp_effect_mean  disp_effect_var
-0         -0.285537         0.007036         -2.565464         6.215591
+0         -0.110934         0.004125         -0.002337         0.009983
 </pre>
+
+<p>
+Plot the distribution of the data:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">n</span> = data[<span class="org-string">'counts'</span>].shape[0]
+plt.clf()
+plt.gcf().set_size_inches(8, 6)
+plt.scatter(x=np.where(data[<span class="org-string">'onehot'</span>] == 1)[1] + np.random.normal(scale=0.1, size=n), y=data[<span class="org-string">'log_cpm'</span>], s=2)
+plt.xlabel(<span class="org-string">'Individual'</span>)
+plt.ylabel(<span class="org-string">'$\log_2(CPM + 1)$'</span>)
+plt.gca().set_xticks([])
+plt.gcf()
+</pre>
+</div>
+
+
+<div class="figure">
+<p><img src="figure/voom.org/data.png" alt="data.png">
+</p>
+</div>
+
+<p>
+Plot a posterior predictive draw.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">post_pred</span> = ed.get_session().run(ed.copy(log_cpm, inf.latent_vars),
+                     {
+                       onehot: data[<span class="org-string">'onehot'</span>],
+                       genotypes: data[<span class="org-string">'genotypes'</span>][:,0:1],
+                       library_size: -data[<span class="org-string">'normalizers'</span>],
+                       log_cpm: data[<span class="org-string">'log_cpm'</span>],
+                     })
+plt.clf()
+plt.gcf().set_size_inches(8, 6)
+plt.scatter(x=np.where(data[<span class="org-string">'onehot'</span>] == 1)[1] + np.random.normal(scale=0.1, size=n), y=post_pred, s=2)
+plt.xlabel(<span class="org-string">'Individual'</span>)
+plt.ylabel(<span class="org-string">'$\log_2(CPM + 1)$'</span>)
+plt.gca().set_xticks([])
+plt.gcf()
+</pre>
+</div>
+
+
+<div class="figure">
+<p><img src="figure/voom.org/post-pred.png" alt="post-pred.png">
+</p>
+</div>
 </div>
 </div>
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2017-12-15 Fri 12:11</p>
+<p class="date">Created: 2017-12-15 Fri 12:30</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>

@@ -406,11 +406,11 @@
 
     ind_bias = ed.models.Normal(loc=tf.zeros([n, 1]), scale=tf.Variable(tf.ones([n, 1])))
     cell_bias = library_size + 6 * tf.log(10.)
-    rate_effect = ed.models.Normal(loc=tf.zeros([1, 1]), scale=tf.ones([1, 1]))
+    rate_effect = ed.models.Normal(loc=tf.zeros([1, 1]), scale=0.1 * tf.ones([1, 1]))
     log_rate = tf.matmul(onehot, tf.matmul(genotypes, rate_effect) + ind_bias)
     mean = log_rate + cell_bias
 
-    disp_effect = ed.models.Normal(loc=tf.zeros([1, 1]), scale=tf.ones([1, 1]))
+    disp_effect = ed.models.Normal(loc=tf.zeros([1, 1]), scale=0.1 * tf.ones([1, 1]))
     disp = tf.matmul(onehot, tf.matmul(genotypes, disp_effect))
     var = tf.exp(-log_rate) + tf.exp(disp) + tf.exp(tf.Variable(tf.zeros([1])))
 
@@ -418,7 +418,7 @@
 
     q_ind_bias = ed.models.Normal(loc=tf.Variable(tf.zeros([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
     q_rate_effect = ed.models.Normal(loc=tf.Variable(tf.random_normal([1, 1])), scale=tf.Variable(tf.random_normal([1, 1])))
-    q_disp_effect = ed.models.Normal(loc=tf.Variable(tf.zeros([1, 1])), scale=tf.Variable(tf.ones([1, 1])))
+    q_disp_effect = ed.models.Normal(loc=tf.Variable(tf.random_normal([1, 1])), scale=tf.Variable(tf.random_normal([1, 1])))
 
     inf = ed.ReparameterizationKLKLqp(
       latent_vars={
@@ -450,13 +450,6 @@
     res = pd.DataFrame(
       np.hstack(ed.get_session().run([q_rate_effect.mean(), q_rate_effect.variance(), q_disp_effect.mean(), q_disp_effect.variance()])),
       columns=['rate_effect_mean', 'rate_effect_var', 'disp_effect_mean', 'disp_effect_var'])
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  :END:
-
-  #+BEGIN_SRC ipython
     res
   #+END_SRC
 
@@ -464,6 +457,49 @@
   :RESULTS:
   #+BEGIN_EXAMPLE
      rate_effect_mean  rate_effect_var  disp_effect_mean  disp_effect_var
-    0         -0.373444         0.003591         -2.677538         6.434384
+    0         -0.110934         0.004125         -0.002337         0.009983
   #+END_EXAMPLE
   :END:
+
+  Plot the distribution of the data:
+
+  #+BEGIN_SRC ipython :ipyfile figure/voom.org/data.png
+    n = data['counts'].shape[0]
+    plt.clf()
+    plt.gcf().set_size_inches(8, 6)
+    plt.scatter(x=np.where(data['onehot'] == 1)[1] + np.random.normal(scale=0.1, size=n), y=data['log_cpm'], s=2)
+    plt.xlabel('Individual')
+    plt.ylabel('$\log_2(CPM + 1)$')
+    plt.gca().set_xticks([])
+    plt.gcf()
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  [[file:figure/voom.org/data.png]]
+  :END:
+
+  Plot a posterior predictive draw.
+
+  #+BEGIN_SRC ipython :ipyfile figure/voom.org/post-pred.png
+    post_pred = ed.get_session().run(ed.copy(log_cpm, inf.latent_vars),
+                         {
+                           onehot: data['onehot'],
+                           genotypes: data['genotypes'][:,0:1],
+                           library_size: -data['normalizers'],
+                           log_cpm: data['log_cpm'],
+                         })
+    plt.clf()
+    plt.gcf().set_size_inches(8, 6)
+    plt.scatter(x=np.where(data['onehot'] == 1)[1] + np.random.normal(scale=0.1, size=n), y=post_pred, s=2)
+    plt.xlabel('Individual')
+    plt.ylabel('$\log_2(CPM + 1)$')
+    plt.gca().set_xticks([])
+    plt.gcf()
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  [[file:figure/voom.org/post-pred.png]]
+  :END:
+
