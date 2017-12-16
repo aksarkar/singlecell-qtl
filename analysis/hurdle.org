@@ -3,91 +3,65 @@
 
 * Introduction
 
-  The key idea of ~voom~ ([[http://genomebiology.com/2014/15/2/R29][Law et al 2014]]) is that the distribution of \(Y =
-  \log_2(\mathrm{CPM} + 1)\) is approximately Gaussian. For simplicity,
-  consider one gene in one cell.
+  The key idea of ~voom~ ([[http://genomebiology.com/2014/15/2/R29][Law et al 2014]]) is that the distribution of
+  log-transformed counts per million is approximately Gaussian. Consider the
+  expression of a single gene in individual \(i\), cell \(j\).
 
-  \[ R = \mbox{number of reads} \]
+  \[ r_{ij} = \mbox{number of reads} \]
 
-  Assuming \(R\) follows the NB2 negative binomial model (Hilbe 2012):
+  Assuming \(r_{ij}\) follows the NB2 negative binomial model (Hilbe 2012):
 
-  \[ E[R] = \lambda \]
-  \[ V[R] = \lambda + \phi \lambda^2 \]
+  \[ E[r_{ij}] = \lambda_{ij} \]
+  \[ V[r_{ij}] = \lambda_{ij} + \phi_{ij} \lambda_{ij}^2 \]
 
   By the definition of CPM:
 
-  \[ Y = \log_2(R) + \mathrm{const} \]
+  \[ y_{ij} = \log_2(r_{ij}) + \mathrm{const} \]
 
   By first order Taylor expansion:
 
-  \[ E[Y] = \mu \approx \log_2 \lambda + \mathrm{const} \]
+  \[ E[y_{ij}] = \mu_{ij} \approx \log_2 \lambda_{ij} + \mathrm{const} \]
 
   By the delta method:
 
-  \[ V[Y] = \sigma^2 \approx V[R] / \lambda^2 = 1/\lambda + \phi \]
+  \[ V[y_{ij}] = \sigma_{ij}^2 \approx V[r_{ij}] / \lambda_{ij}^2 = 1/\lambda_{ij} + \phi_{ij} \]
 
-  The key idea of ~mast~ ([[https://dx.doi.org/10.1186/s13059-015-0844-5][Finak et al 2015]]) is to model non-zero \(R\) using a
-  Gaussian distribution, and model zero \(R\) using logistic regression. The
-  key distinction between this approach and the [[file:zinb.org][zero-inflated
-  negative binomial model]] is that zeroes are assumed to arise from only one
-  process.
+  We assume:
 
-  This naturally suggests a Bayesian model which simultaneously calls mean and
-  variance QTLs based on the likelihood:
+  \[ y_{ij} \approx N(\mu_{ij}, \sigma^2_{ij}) \]
 
-  \[ Y \mid Y = 0 \sim \mathrm{Bernoulli}(1 - \mathrm{sigmoid}(AX\theta_m + \delta)) \]
+  Now, we seek to write a hierarchical model for \(y\) in terms of the genotype
+  of individual \(i\) to call mean and variance QTLs. Our idea is that the
+  variance of the observations \(Y\) can be decomposed as follows:
 
-  \[ Y \mid Y > 0 \sim N(AX\theta_m + \delta, \exp(-AX\theta_m - \delta) +
-  \exp(AX\theta_v) + \sigma^2) \]
+  #+ATTR_HTML: :class table
+  |            | Within individual                       | Between individual |
+  |------------+-----------------------------------------+--------------------|
+  | Observed   | \(\exp(-X_i \beta + u_i) + X_i \gamma\) | \(X_i \beta\)      |
+  | Unobserved | \(\sigma^2\)                            | \(u_i\)            |
 
-  where \(\delta\) is a known constant that depends on library size, \(A\) maps
-  from cells to individuals, and \(X\) is the genotype matrix.
+  In more detail: between individual variation is partially explained by
+  /cis/-genotype, and partially explained by other sources. Within individual
+  variation is partially explained by mean expression (as derived above),
+  /cis/-genotype (what we hope to find), and other sources (/trans/-regulation,
+  sampling variance, etc.)
 
-  The key issues are:
+  Accordingly, we have:
 
-  1. *Is it possible to develop an individual-level model?* An alternative
-     model would be to estimate a variance for each individual, and then plug
-     into existing QTL mapping software. This approach is naturally suggested
-     by the ~voom~ approximation, but it is not obvious that the approach will
-     generalize to zero-inflated data.
+  \[ \mu_{ij} = X_i \beta + u_i - \mathrm{const} \]
 
-     Fitting the proposed model will require writing new software as opposed to
-     plugging into existing software. We previously built an efficient
-     algorithm and inference engine to build these kind of models ([[https://www.biorxiv.org/content/early/2017/02/10/107623][Park et al
-     2017]]), but it has one major issue: it is computationally expensive to
-     perform statistical tests on the fitted models because the approximate
-     Bayesian inferences underestimate the uncertainty in the estimated values.
+  \[ \log \sigma^2_{ij} = \exp(-(X_i\beta + u_i)) + X_i \gamma + \sigma^2 \]
 
-  2. *Do we need to actually fit the dropout model?* ~mast~ conditions on the
-     observed \(Y = 0\), not on a latent \(Z = 0\), which means we could simply
-     do the same and ignore zeros.
+  We can estimate the posterior \(p(\beta, \gamma, u_i \mid \cdot)\) this model
+  using a combination of black-box variational inference and variational EM.
 
-     If we did so, then mean/variance QTL effect size estimation will be less
-     robust for genes with high dropout. This might not be a problem depending
-     on the stringency of gene filtering.
+  *TODO:* marginalize out \(u_i\)?
 
-  3. *For a single gene, do we need to worry about mean QTLs in LD with
-     variance QTLs?* We previously [[https://github.com/YPARK/fqtl][built multivariate mean/variance QTL models]]
-     which could account for LD, and could share information between the mean
-     and variance models.
+  *TODO:* prior specification on the correct scales for \(\beta, \gamma\)
 
-     The fundamental problem is that if we assume that the mean and dispersion
-     both have genetic components, then the mean is no longer independent of
-     the dispersion.
-
-     This actually could be derived without using the fact that both depend on
-     the same genotypes if we use second-order Taylor expansion:
-
-     \[ \mu \approx \log_2 \lambda + \frac{V[R]}{2 \lambda^2} \]
-
-  4. *Do we need to share parameters between genes?* ~mast~ assumes genes are
-     conditionally independent. But this is no longer true when nearby genes
-     can be driven by overlapping (or correlated) /cis/-genotypes.
-
-     We previously developed multiresponse QTL models which learned the target
-     genes of causal variants, allowing the true target gene to explain away
-     nearby correlated genes ([[https://www.biorxiv.org/content/early/2017/11/14/219428][Park et al 2017]]).
-
+  *TODO:* verify that Edward is maximizing ELBO w.r.t. \(\sigma^2\) even
+  without a variational approximation
+  
 * Setup                                                            :noexport:
 
   #+BEGIN_SRC emacs-lisp
@@ -102,7 +76,7 @@
   #+CALL: ipython3(venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 41436690
+  : Submitted batch job 41442539
 
   #+BEGIN_SRC ipython
     import edward as ed
@@ -165,7 +139,7 @@
 
 * Test case
 
-  #+CALL: get-gene-info() :exports both
+  #+CALL: get-gene-info() :exports none
 
   #+RESULTS:
   :RESULTS:
@@ -250,47 +224,6 @@
   :RESULTS:
   :END:
 
-* Edward sanity check                                              :noexport:
-
-  #+CALL: reset()
-
-  #+RESULTS:
-  :RESULTS:
-  :END:
-
-  #+BEGIN_SRC ipython
-    m, _ = data['onehot'].shape
-    n, p = data['genotypes'].shape
-
-    x = tf.placeholder(tf.float32, [n, p])
-    a = tf.placeholder(tf.float32, [m, n])
-    beta = ed.models.Normal(loc=tf.zeros([p, 1]), scale=tf.ones([1]))
-    y = ed.models.Normal(loc=tf.matmul(a, tf.matmul(x, beta)), scale=1.)
-
-    q_beta = ed.models.NormalWithSoftplusScale(loc=tf.Variable(tf.zeros([p, 1])), scale=tf.Variable(tf.ones([1])))
-
-    inf = ed.ReparameterizationKLqp(
-      latent_vars={beta: q_beta},
-      data={y: np.random.normal(size=(m, 1)).astype(np.float32),
-            x: data['genotypes'],
-            a: data['onehot']})
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  :END:
-
-  #+BEGIN_SRC ipython 
-    inf.run(optimizer=tf.train.GradientDescentOptimizer(learning_rate=1e-6))
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  : 1000/1000 [100%] ██████████████████████████████ Elapsed: 1s | Loss: 11070.640
-  :END:
-
-* ML sanity check
-  
   #+BEGIN_SRC ipython
     with open('test_data.pkl', 'rb') as f:
       data = pickle.load(f)
@@ -302,95 +235,9 @@
   :RESULTS:
   :END:
 
-  #+CALL: reset()
-
-  #+RESULTS:
-  :RESULTS:
-  :END:
-
-  #+BEGIN_SRC ipython
-    with tf.Graph().as_default():
-      m, n = data['onehot'].shape
-
-      onehot = tf.placeholder(tf.float32, [m, n])
-      genotypes = tf.placeholder(tf.float32, [n, 1])
-      log_cpm = tf.placeholder(tf.float32, [m, 1])
-      library_size = tf.placeholder(tf.float32, [m, 1])
-
-      with tf.variable_scope('params', initializer=tf.zeros_initializer):
-        mean_effect = tf.get_variable('mean', [1, 1])
-        log_rate = tf.matmul(genotypes, mean_effect)
-        cell_bias = library_size + 6 * tf.log(10.)
-        mean = tf.matmul(onehot, log_rate) + cell_bias
-
-        disp_effect = tf.get_variable('disp', [1, 1])
-        disp = tf.matmul(genotypes, disp_effect)
-        resid = tf.get_variable('resid', [1, 1])
-        var = tf.exp(-mean) + tf.matmul(onehot, tf.exp(disp)) + tf.exp(resid)
-
-      llik = .5 * tf.reduce_sum(-tf.log(var) - tf.log(tf.constant(2 * np.pi)) - tf.square(log_cpm - mean) / var) 
-
-      opt = [mean_effect, disp_effect, tf.exp(resid)]
-
-      train = tf.train.RMSPropOptimizer(learning_rate=1e-2).minimize(-llik)
-
-      feed_dict = {genotypes: data['genotypes'][:,0:1],
-                   onehot: data['onehot'],
-                   library_size: data['normalizers'],
-                   log_cpm: data['log_cpm']}
-
-      with tf.Session() as sess:
-        sess.run(tf.global_variables_initializer())
-        curr_llik = float('-inf')
-        for i in range(3000):
-          _, update = sess.run([train, llik], feed_dict)
-          if np.isclose(update, curr_llik):
-            print('Converged after {} epochs'.format(i))
-            break
-          else:
-            curr_llik = update
-        estimates = sess.run(opt)
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  :END:
-
-  #+BEGIN_SRC ipython
-    curr_llik
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  : -3191.2041
-  :END:
-
-  #+BEGIN_SRC ipython
-    pd.DataFrame(np.hstack(estimates), columns=['mean_effect', 'disp_effect', 'resid'])
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  #+BEGIN_EXAMPLE
-     mean_effect  disp_effect    resid
-    0     0.413716    -1.031514  0.87242
-  #+END_EXAMPLE
-  :END:
-
-* Voom component
+* Model specification and inference
 
   #+CALL: reset()
-
-  #+RESULTS:
-  :RESULTS:
-  :END:
-
-  #+BEGIN_SRC ipython
-    with open('test_data.pkl', 'rb') as f:
-      data = pickle.load(f)
-
-    data['log_cpm'] = np.log(data['counts'] + 1) + data['normalizers'] + 6 * np.log(10)
-  #+END_SRC
 
   #+RESULTS:
   :RESULTS:
@@ -405,7 +252,7 @@
     library_size = tf.placeholder(tf.float32, [m, 1])
 
     ind_bias = ed.models.Normal(loc=tf.zeros([n, 1]), scale=tf.Variable(tf.ones([n, 1])))
-    cell_bias = library_size + 6 * tf.log(10.)
+    cell_bias = library_size - 6 * tf.log(10.)
     rate_effect = ed.models.Normal(loc=tf.zeros([1, 1]), scale=0.1 * tf.ones([1, 1]))
     log_rate = tf.matmul(onehot, tf.matmul(genotypes, rate_effect) + ind_bias)
     mean = log_rate + cell_bias
@@ -444,6 +291,7 @@
 
   #+RESULTS:
   :RESULTS:
+  : 1000/1000 [100%] ██████████████████████████████ Elapsed: 6s | Loss: 2302.281
   :END:
 
   #+BEGIN_SRC ipython
@@ -457,17 +305,16 @@
   :RESULTS:
   #+BEGIN_EXAMPLE
      rate_effect_mean  rate_effect_var  disp_effect_mean  disp_effect_var
-    0         -0.110934         0.004125         -0.002337         0.009983
+    0          0.005864         0.001925         -0.040866         0.003422
   #+END_EXAMPLE
   :END:
 
   Plot the distribution of the data:
 
   #+BEGIN_SRC ipython :ipyfile figure/voom.org/data.png
-    n = data['counts'].shape[0]
     plt.clf()
     plt.gcf().set_size_inches(8, 6)
-    plt.scatter(x=np.where(data['onehot'] == 1)[1] + np.random.normal(scale=0.1, size=n), y=data['log_cpm'], s=2)
+    plt.scatter(x=np.where(data['onehot'] == 1)[1] + np.random.normal(scale=0.1, size=m), y=data['log_cpm'], s=2)
     plt.xlabel('Individual')
     plt.ylabel('$\log_2(CPM + 1)$')
     plt.gca().set_xticks([])
@@ -482,16 +329,20 @@
   Plot a posterior predictive draw.
 
   #+BEGIN_SRC ipython :ipyfile figure/voom.org/post-pred.png
-    post_pred = ed.get_session().run(ed.copy(log_cpm, inf.latent_vars),
-                         {
-                           onehot: data['onehot'],
-                           genotypes: data['genotypes'][:,0:1],
-                           library_size: -data['normalizers'],
-                           log_cpm: data['log_cpm'],
-                         })
+    post_pred = ed.get_session().run(
+      ed.copy(log_cpm, inf.latent_vars),
+      {
+        onehot: data['onehot'],
+        genotypes: data['genotypes'][:,0:1],
+        library_size: -data['normalizers'],
+        log_cpm: data['log_cpm'],
+      })
+    est_bias = ed.get_session().run(q_ind_bias.mean()).ravel()
+
     plt.clf()
     plt.gcf().set_size_inches(8, 6)
-    plt.scatter(x=np.where(data['onehot'] == 1)[1] + np.random.normal(scale=0.1, size=n), y=post_pred, s=2)
+    plt.scatter(x=np.where(data['onehot'] == 1)[1] + np.random.normal(scale=0.1, size=m), y=post_pred, s=2)
+    plt.scatter(x=np.arange(n), y=est_bias, c='red')
     plt.xlabel('Individual')
     plt.ylabel('$\log_2(CPM + 1)$')
     plt.gca().set_xticks([])
@@ -502,4 +353,55 @@
   :RESULTS:
   [[file:figure/voom.org/post-pred.png]]
   :END:
+
+* Next steps
+
+  The key idea of ~mast~ ([[https://dx.doi.org/10.1186/s13059-015-0844-5][Finak et al 2015]]) is to model non-zero \(R\) using a
+  Gaussian distribution, and model zero \(R\) using logistic regression. The
+  key distinction between this approach and the [[file:zinb.org][zero-inflated
+  negative binomial model]] is that zeroes are assumed to arise from only one
+  process.
+
+  This naturally suggests a Bayesian model which simultaneously calls mean and
+  variance QTLs based on the likelihood:
+
+  \[ Y \mid Y = 0 \sim \mathrm{Bernoulli}(1 - \mathrm{sigmoid}(AX\theta_m + \delta)) \]
+
+  \[ Y \mid Y > 0 \sim N(AX\theta_m + \delta, \exp(-AX\theta_m - \delta) +
+  \exp(AX\theta_v) + \sigma^2) \]
+
+  where \(\delta\) is a known constant that depends on library size, \(A\) maps
+  from cells to individuals, and \(X\) is the genotype matrix.
+
+  The key issues are:
+
+  1. *Do we need to actually fit the dropout model?* ~mast~ conditions on the
+     observed \(Y = 0\), not on a latent \(Z = 0\), which means we could simply
+     do the same and ignore zeros.
+
+     If we did so, then mean/variance QTL effect size estimation will be less
+     robust for genes with high dropout. This might not be a problem depending
+     on the stringency of gene filtering.
+
+  2. *For a single gene, do we need to worry about mean QTLs in LD with
+     variance QTLs?* We previously [[https://github.com/YPARK/fqtl][built multivariate mean/variance QTL models]]
+     which could account for LD, and could share information between the mean
+     and variance models.
+
+     The fundamental problem is that if we assume that the mean and dispersion
+     both have genetic components, then the mean is no longer independent of
+     the dispersion.
+
+     This actually could be derived without using the fact that both depend on
+     the same genotypes if we use second-order Taylor expansion:
+
+     \[ \mu \approx \log_2 \lambda + \frac{V[R]}{2 \lambda^2} \]
+
+  3. *Do we need to share parameters between genes?* ~mast~ assumes genes are
+     conditionally independent. But this is no longer true when nearby genes
+     can be driven by overlapping (or correlated) /cis/-genotypes.
+
+     We previously developed multiresponse QTL models which learned the target
+     genes of causal variants, allowing the true target gene to explain away
+     nearby correlated genes ([[https://www.biorxiv.org/content/early/2017/11/14/219428][Park et al 2017]]).
 

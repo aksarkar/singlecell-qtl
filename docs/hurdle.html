@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2017-12-15 Fri 12:30 -->
+<!-- 2017-12-15 Fri 18:56 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hurdle model estimation</title>
@@ -257,34 +257,34 @@ for the JavaScript code in this tag.
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents">
 <ul>
-<li><a href="#org3c5def5">Introduction</a></li>
-<li><a href="#org49d275c">Test case</a></li>
-<li><a href="#orga720283">ML sanity check</a></li>
-<li><a href="#org6ed67d5">Voom component</a></li>
+<li><a href="#orga5b8a16">Introduction</a></li>
+<li><a href="#org43d528c">Test case</a></li>
+<li><a href="#orgc64fce9">Model specification and inference</a></li>
+<li><a href="#org9d24ba3">Next steps</a></li>
 </ul>
 </div>
 </div>
 
-<div id="outline-container-org3c5def5" class="outline-2">
-<h2 id="org3c5def5">Introduction</h2>
-<div class="outline-text-2" id="text-org3c5def5">
+<div id="outline-container-orga5b8a16" class="outline-2">
+<h2 id="orga5b8a16">Introduction</h2>
+<div class="outline-text-2" id="text-orga5b8a16">
 <p>
-The key idea of <code>voom</code> (<a href="http://genomebiology.com/2014/15/2/R29">Law et al 2014</a>) is that the distribution of \(Y =
-  \log_2(\mathrm{CPM} + 1)\) is approximately Gaussian. For simplicity,
-consider one gene in one cell.
+The key idea of <code>voom</code> (<a href="http://genomebiology.com/2014/15/2/R29">Law et al 2014</a>) is that the distribution of
+log-transformed counts per million is approximately Gaussian. Consider the
+expression of a single gene in individual \(i\), cell \(j\).
 </p>
 
 <p>
-\[ R = \mbox{number of reads} \]
+\[ r_{ij} = \mbox{number of reads} \]
 </p>
 
 <p>
-Assuming \(R\) follows the NB2 negative binomial model (Hilbe 2012):
+Assuming \(r_{ij}\) follows the NB2 negative binomial model (Hilbe 2012):
 </p>
 
 <p>
-\[ E[R] = \lambda \]
-\[ V[R] = \lambda + \phi \lambda^2 \]
+\[ E[r_{ij}] = \lambda_{ij} \]
+\[ V[r_{ij}] = \lambda_{ij} + \phi_{ij} \lambda_{ij}^2 \]
 </p>
 
 <p>
@@ -292,7 +292,7 @@ By the definition of CPM:
 </p>
 
 <p>
-\[ Y = \log_2(R) + \mathrm{const} \]
+\[ y_{ij} = \log_2(r_{ij}) + \mathrm{const} \]
 </p>
 
 <p>
@@ -300,7 +300,7 @@ By first order Taylor expansion:
 </p>
 
 <p>
-\[ E[Y] = \mu \approx \log_2 \lambda + \mathrm{const} \]
+\[ E[y_{ij}] = \mu_{ij} \approx \log_2 \lambda_{ij} + \mathrm{const} \]
 </p>
 
 <p>
@@ -308,120 +308,98 @@ By the delta method:
 </p>
 
 <p>
-\[ V[Y] = \sigma^2 \approx V[R] / \lambda^2 = 1/\lambda + \phi \]
+\[ V[y_{ij}] = \sigma_{ij}^2 \approx V[r_{ij}] / \lambda_{ij}^2 = 1/\lambda_{ij} + \phi_{ij} \]
 </p>
 
 <p>
-The key idea of <code>mast</code> (<a href="https://dx.doi.org/10.1186/s13059-015-0844-5">Finak et al 2015</a>) is to model non-zero \(R\) using a
-Gaussian distribution, and model zero \(R\) using logistic regression. The
-key distinction between this approach and the <a href="zinb.html">zero-inflated
-negative binomial model</a> is that zeroes are assumed to arise from only one
-process.
+We assume:
 </p>
 
 <p>
-This naturally suggests a Bayesian model which simultaneously calls mean and
-variance QTLs based on the likelihood:
+\[ y_{ij} \approx N(\mu_{ij}, \sigma^2_{ij}) \]
 </p>
 
 <p>
-\[ Y \mid Y = 0 \sim \mathrm{Bernoulli}(1 - \mathrm{sigmoid}(AX\theta_m + \delta)) \]
+Now, we seek to write a hierarchical model for \(y\) in terms of the genotype
+of individual \(i\) to call mean and variance QTLs. Our idea is that the
+variance of the observations \(Y\) can be decomposed as follows:
+</p>
+
+<table class="table">
+
+
+<colgroup>
+<col  class="org-left">
+
+<col  class="org-left">
+
+<col  class="org-left">
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">&#xa0;</th>
+<th scope="col" class="org-left">Within individual</th>
+<th scope="col" class="org-left">Between individual</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">Observed</td>
+<td class="org-left">\(\exp(-X_i \beta + u_i) + X_i \gamma\)</td>
+<td class="org-left">\(X_i \beta\)</td>
+</tr>
+
+<tr>
+<td class="org-left">Unobserved</td>
+<td class="org-left">\(\sigma^2\)</td>
+<td class="org-left">\(u_i\)</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+In more detail: between individual variation is partially explained by
+<i>cis</i>-genotype, and partially explained by other sources. Within individual
+variation is partially explained by mean expression (as derived above),
+<i>cis</i>-genotype (what we hope to find), and other sources (<i>trans</i>-regulation,
+sampling variance, etc.)
 </p>
 
 <p>
-\[ Y \mid Y > 0 \sim N(AX\theta_m + \delta, \exp(-AX\theta_m - \delta) +
-  \exp(AX\theta_v) + \sigma^2) \]
+Accordingly, we have:
 </p>
 
 <p>
-where \(\delta\) is a known constant that depends on library size, \(A\) maps
-from cells to individuals, and \(X\) is the genotype matrix.
+\[ \mu_{ij} = X_i \beta + u_i - \mathrm{const} \]
 </p>
 
 <p>
-The key issues are:
-</p>
-
-<ol class="org-ol">
-<li><p>
-<b>Is it possible to develop an individual-level model?</b> An alternative
-model would be to estimate a variance for each individual, and then plug
-into existing QTL mapping software. This approach is naturally suggested
-by the <code>voom</code> approximation, but it is not obvious that the approach will
-generalize to zero-inflated data.
+\[ \log \sigma^2_{ij} = \exp(-(X_i\beta + u_i)) + X_i \gamma + \sigma^2 \]
 </p>
 
 <p>
-Fitting the proposed model will require writing new software as opposed to
-plugging into existing software. We previously built an efficient
-algorithm and inference engine to build these kind of models (<a href="https://www.biorxiv.org/content/early/2017/02/10/107623">Park et al
-2017</a>), but it has one major issue: it is computationally expensive to
-perform statistical tests on the fitted models because the approximate
-Bayesian inferences underestimate the uncertainty in the estimated values.
-</p></li>
-
-<li><p>
-<b>Do we need to actually fit the dropout model?</b> <code>mast</code> conditions on the
-observed \(Y = 0\), not on a latent \(Z = 0\), which means we could simply
-do the same and ignore zeros.
+We can estimate the posterior \(p(\beta, \gamma, u_i \mid \cdot)\) this model
+using a combination of black-box variational inference and variational EM.
 </p>
 
 <p>
-If we did so, then mean/variance QTL effect size estimation will be less
-robust for genes with high dropout. This might not be a problem depending
-on the stringency of gene filtering.
-</p></li>
-
-<li><p>
-<b>For a single gene, do we need to worry about mean QTLs in LD with
-variance QTLs?</b> We previously <a href="https://github.com/YPARK/fqtl">built multivariate mean/variance QTL models</a>
-which could account for LD, and could share information between the mean
-and variance models.
+<b>TODO:</b> marginalize out \(u_i\)?
 </p>
 
 <p>
-The fundamental problem is that if we assume that the mean and dispersion
-both have genetic components, then the mean is no longer independent of
-the dispersion.
+<b>TODO:</b> prior specification on the correct scales for \(\beta, \gamma\)
 </p>
 
 <p>
-This actually could be derived without using the fact that both depend on
-the same genotypes if we use second-order Taylor expansion:
+<b>TODO:</b> verify that Edward is maximizing ELBO w.r.t. \(\sigma^2\) even
+without a variational approximation
 </p>
-
-<p>
-\[ \mu \approx \log_2 \lambda + \frac{V[R]}{2 \lambda^2} \]
-</p></li>
-
-<li><p>
-<b>Do we need to share parameters between genes?</b> <code>mast</code> assumes genes are
-conditionally independent. But this is no longer true when nearby genes
-can be driven by overlapping (or correlated) <i>cis</i>-genotypes.
-</p>
-
-<p>
-We previously developed multiresponse QTL models which learned the target
-genes of causal variants, allowing the true target gene to explain away
-nearby correlated genes (<a href="https://www.biorxiv.org/content/early/2017/11/14/219428">Park et al 2017</a>).
-</p></li>
-</ol>
 </div>
 </div>
 
-<div id="outline-container-org49d275c" class="outline-2">
-<h2 id="org49d275c">Test case</h2>
-<div class="outline-text-2" id="text-org49d275c">
-<pre class="example">
-                chr      start        end      name strand      source
-gene                                                                    
-ENSG00000000419  hs20   49551404   49575092      DPM1      -  H. sapiens
-ENSG00000000457   hs1  169818772  169863408     SCYL3      -  H. sapiens
-ENSG00000000460   hs1  169631245  169823221  C1orf112      +  H. sapiens
-ENSG00000000938   hs1   27938575   27961788       FGR      -  H. sapiens
-ENSG00000000971   hs1  196621008  196716634       CFH      +  H. sapiens
-</pre>
-
+<div id="outline-container-org43d528c" class="outline-2">
+<h2 id="org43d528c">Test case</h2>
+<div class="outline-text-2" id="text-org43d528c">
 <div class="org-src-container">
 <pre class="src src-ipython">gene_info.query(<span class="org-string">'name == "ZSWIM7"'</span>)
 </pre>
@@ -478,12 +456,7 @@ genotypes.shape
   pickle.dump(data, f)
 </pre>
 </div>
-</div>
-</div>
 
-<div id="outline-container-orga720283" class="outline-2">
-<h2 id="orga720283">ML sanity check</h2>
-<div class="outline-text-2" id="text-orga720283">
 <div class="org-src-container">
 <pre class="src src-ipython"><span class="org-keyword">with</span> <span class="org-builtin">open</span>(<span class="org-string">'test_data.pkl'</span>, <span class="org-string">'rb'</span>) <span class="org-keyword">as</span> f:
   <span class="org-variable-name">data</span> = pickle.load(f)
@@ -491,85 +464,12 @@ genotypes.shape
 <span class="org-variable-name">data</span>[<span class="org-string">'log_cpm'</span>] = np.log(data[<span class="org-string">'counts'</span>] + 1) + data[<span class="org-string">'normalizers'</span>] + 6 * np.log(10)
 </pre>
 </div>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span class="org-keyword">with</span> tf.Graph().as_default():
-  <span class="org-variable-name">m</span>, <span class="org-variable-name">n</span> = data[<span class="org-string">'onehot'</span>].shape
-
-  <span class="org-variable-name">onehot</span> = tf.placeholder(tf.float32, [m, n])
-  <span class="org-variable-name">genotypes</span> = tf.placeholder(tf.float32, [n, 1])
-  <span class="org-variable-name">log_cpm</span> = tf.placeholder(tf.float32, [m, 1])
-  <span class="org-variable-name">library_size</span> = tf.placeholder(tf.float32, [m, 1])
-
-  <span class="org-keyword">with</span> tf.variable_scope(<span class="org-string">'params'</span>, initializer=tf.zeros_initializer):
-    <span class="org-variable-name">mean_effect</span> = tf.get_variable(<span class="org-string">'mean'</span>, [1, 1])
-    <span class="org-variable-name">log_rate</span> = tf.matmul(genotypes, mean_effect)
-    <span class="org-variable-name">cell_bias</span> = library_size + 6 * tf.log(10.)
-    <span class="org-variable-name">mean</span> = tf.matmul(onehot, log_rate) + cell_bias
-
-    <span class="org-variable-name">disp_effect</span> = tf.get_variable(<span class="org-string">'disp'</span>, [1, 1])
-    <span class="org-variable-name">disp</span> = tf.matmul(genotypes, disp_effect)
-    <span class="org-variable-name">resid</span> = tf.get_variable(<span class="org-string">'resid'</span>, [1, 1])
-    <span class="org-variable-name">var</span> = tf.exp(-mean) + tf.matmul(onehot, tf.exp(disp)) + tf.exp(resid)
-
-  <span class="org-variable-name">llik</span> = .5 * tf.reduce_sum(-tf.log(var) - tf.log(tf.constant(2 * np.pi)) - tf.square(log_cpm - mean) / var) 
-
-  <span class="org-variable-name">opt</span> = [mean_effect, disp_effect, tf.exp(resid)]
-
-  <span class="org-variable-name">train</span> = tf.train.RMSPropOptimizer(learning_rate=1e-2).minimize(-llik)
-
-  <span class="org-variable-name">feed_dict</span> = {genotypes: data[<span class="org-string">'genotypes'</span>][:,0:1],
-               onehot: data[<span class="org-string">'onehot'</span>],
-               library_size: data[<span class="org-string">'normalizers'</span>],
-               log_cpm: data[<span class="org-string">'log_cpm'</span>]}
-
-  <span class="org-keyword">with</span> tf.Session() <span class="org-keyword">as</span> sess:
-    sess.run(tf.global_variables_initializer())
-    <span class="org-variable-name">curr_llik</span> = <span class="org-builtin">float</span>(<span class="org-string">'-inf'</span>)
-    <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-builtin">range</span>(3000):
-      <span class="org-variable-name">_</span>, <span class="org-variable-name">update</span> = sess.run([train, llik], feed_dict)
-      <span class="org-keyword">if</span> np.isclose(update, curr_llik):
-        <span class="org-keyword">print</span>(<span class="org-string">'Converged after {} epochs'</span>.<span class="org-builtin">format</span>(i))
-        <span class="org-keyword">break</span>
-      <span class="org-keyword">else</span>:
-        <span class="org-variable-name">curr_llik</span> = update
-    <span class="org-variable-name">estimates</span> = sess.run(opt)
-</pre>
-</div>
-
-<div class="org-src-container">
-<pre class="src src-ipython">curr_llik
-</pre>
-</div>
-
-<pre class="example">
--3191.2041
-
-</pre>
-
-<div class="org-src-container">
-<pre class="src src-ipython">pd.DataFrame(np.hstack(estimates), columns=[<span class="org-string">'mean_effect'</span>, <span class="org-string">'disp_effect'</span>, <span class="org-string">'resid'</span>])
-</pre>
-</div>
-
-<pre class="example">
- mean_effect  disp_effect    resid
-0     0.413716    -1.031514  0.87242
-</pre>
 </div>
 </div>
 
-<div id="outline-container-org6ed67d5" class="outline-2">
-<h2 id="org6ed67d5">Voom component</h2>
-<div class="outline-text-2" id="text-org6ed67d5">
-<div class="org-src-container">
-<pre class="src src-ipython"><span class="org-keyword">with</span> <span class="org-builtin">open</span>(<span class="org-string">'test_data.pkl'</span>, <span class="org-string">'rb'</span>) <span class="org-keyword">as</span> f:
-  <span class="org-variable-name">data</span> = pickle.load(f)
-
-<span class="org-variable-name">data</span>[<span class="org-string">'log_cpm'</span>] = np.log(data[<span class="org-string">'counts'</span>] + 1) + data[<span class="org-string">'normalizers'</span>] + 6 * np.log(10)
-</pre>
-</div>
-
+<div id="outline-container-orgc64fce9" class="outline-2">
+<h2 id="orgc64fce9">Model specification and inference</h2>
+<div class="outline-text-2" id="text-orgc64fce9">
 <div class="org-src-container">
 <pre class="src src-ipython"><span class="org-variable-name">m</span>, <span class="org-variable-name">n</span> = data[<span class="org-string">'onehot'</span>].shape
 <span class="org-variable-name">_</span>, <span class="org-variable-name">p</span> = data[<span class="org-string">'genotypes'</span>].shape
@@ -579,7 +479,7 @@ genotypes.shape
 <span class="org-variable-name">library_size</span> = tf.placeholder(tf.float32, [m, 1])
 
 <span class="org-variable-name">ind_bias</span> = ed.models.Normal(loc=tf.zeros([n, 1]), scale=tf.Variable(tf.ones([n, 1])))
-<span class="org-variable-name">cell_bias</span> = library_size + 6 * tf.log(10.)
+<span class="org-variable-name">cell_bias</span> = library_size - 6 * tf.log(10.)
 <span class="org-variable-name">rate_effect</span> = ed.models.Normal(loc=tf.zeros([1, 1]), scale=0.1 * tf.ones([1, 1]))
 <span class="org-variable-name">log_rate</span> = tf.matmul(onehot, tf.matmul(genotypes, rate_effect) + ind_bias)
 <span class="org-variable-name">mean</span> = log_rate + cell_bias
@@ -614,6 +514,11 @@ genotypes.shape
 </pre>
 </div>
 
+<pre class="example">
+1000/1000 [100%] ██████████████████████████████ Elapsed: 6s | Loss: 2302.281
+
+</pre>
+
 <div class="org-src-container">
 <pre class="src src-ipython"><span class="org-variable-name">res</span> = pd.DataFrame(
   np.hstack(ed.get_session().run([q_rate_effect.mean(), q_rate_effect.variance(), q_disp_effect.mean(), q_disp_effect.variance()])),
@@ -624,7 +529,7 @@ res
 
 <pre class="example">
  rate_effect_mean  rate_effect_var  disp_effect_mean  disp_effect_var
-0         -0.110934         0.004125         -0.002337         0.009983
+0          0.005864         0.001925         -0.040866         0.003422
 </pre>
 
 <p>
@@ -632,10 +537,9 @@ Plot the distribution of the data:
 </p>
 
 <div class="org-src-container">
-<pre class="src src-ipython"><span class="org-variable-name">n</span> = data[<span class="org-string">'counts'</span>].shape[0]
-plt.clf()
+<pre class="src src-ipython">plt.clf()
 plt.gcf().set_size_inches(8, 6)
-plt.scatter(x=np.where(data[<span class="org-string">'onehot'</span>] == 1)[1] + np.random.normal(scale=0.1, size=n), y=data[<span class="org-string">'log_cpm'</span>], s=2)
+plt.scatter(x=np.where(data[<span class="org-string">'onehot'</span>] == 1)[1] + np.random.normal(scale=0.1, size=m), y=data[<span class="org-string">'log_cpm'</span>], s=2)
 plt.xlabel(<span class="org-string">'Individual'</span>)
 plt.ylabel(<span class="org-string">'$\log_2(CPM + 1)$'</span>)
 plt.gca().set_xticks([])
@@ -654,16 +558,20 @@ Plot a posterior predictive draw.
 </p>
 
 <div class="org-src-container">
-<pre class="src src-ipython"><span class="org-variable-name">post_pred</span> = ed.get_session().run(ed.copy(log_cpm, inf.latent_vars),
-                     {
-                       onehot: data[<span class="org-string">'onehot'</span>],
-                       genotypes: data[<span class="org-string">'genotypes'</span>][:,0:1],
-                       library_size: -data[<span class="org-string">'normalizers'</span>],
-                       log_cpm: data[<span class="org-string">'log_cpm'</span>],
-                     })
+<pre class="src src-ipython"><span class="org-variable-name">post_pred</span> = ed.get_session().run(
+  ed.copy(log_cpm, inf.latent_vars),
+  {
+    onehot: data[<span class="org-string">'onehot'</span>],
+    genotypes: data[<span class="org-string">'genotypes'</span>][:,0:1],
+    library_size: -data[<span class="org-string">'normalizers'</span>],
+    log_cpm: data[<span class="org-string">'log_cpm'</span>],
+  })
+<span class="org-variable-name">est_bias</span> = ed.get_session().run(q_ind_bias.mean()).ravel()
+
 plt.clf()
 plt.gcf().set_size_inches(8, 6)
-plt.scatter(x=np.where(data[<span class="org-string">'onehot'</span>] == 1)[1] + np.random.normal(scale=0.1, size=n), y=post_pred, s=2)
+plt.scatter(x=np.where(data[<span class="org-string">'onehot'</span>] == 1)[1] + np.random.normal(scale=0.1, size=m), y=post_pred, s=2)
+plt.scatter(x=np.arange(n), y=est_bias, c=<span class="org-string">'red'</span>)
 plt.xlabel(<span class="org-string">'Individual'</span>)
 plt.ylabel(<span class="org-string">'$\log_2(CPM + 1)$'</span>)
 plt.gca().set_xticks([])
@@ -678,10 +586,94 @@ plt.gcf()
 </div>
 </div>
 </div>
+
+<div id="outline-container-org9d24ba3" class="outline-2">
+<h2 id="org9d24ba3">Next steps</h2>
+<div class="outline-text-2" id="text-org9d24ba3">
+<p>
+The key idea of <code>mast</code> (<a href="https://dx.doi.org/10.1186/s13059-015-0844-5">Finak et al 2015</a>) is to model non-zero \(R\) using a
+Gaussian distribution, and model zero \(R\) using logistic regression. The
+key distinction between this approach and the <a href="zinb.html">zero-inflated
+negative binomial model</a> is that zeroes are assumed to arise from only one
+process.
+</p>
+
+<p>
+This naturally suggests a Bayesian model which simultaneously calls mean and
+variance QTLs based on the likelihood:
+</p>
+
+<p>
+\[ Y \mid Y = 0 \sim \mathrm{Bernoulli}(1 - \mathrm{sigmoid}(AX\theta_m + \delta)) \]
+</p>
+
+<p>
+\[ Y \mid Y > 0 \sim N(AX\theta_m + \delta, \exp(-AX\theta_m - \delta) +
+  \exp(AX\theta_v) + \sigma^2) \]
+</p>
+
+<p>
+where \(\delta\) is a known constant that depends on library size, \(A\) maps
+from cells to individuals, and \(X\) is the genotype matrix.
+</p>
+
+<p>
+The key issues are:
+</p>
+
+<ol class="org-ol">
+<li><p>
+<b>Do we need to actually fit the dropout model?</b> <code>mast</code> conditions on the
+observed \(Y = 0\), not on a latent \(Z = 0\), which means we could simply
+do the same and ignore zeros.
+</p>
+
+<p>
+If we did so, then mean/variance QTL effect size estimation will be less
+robust for genes with high dropout. This might not be a problem depending
+on the stringency of gene filtering.
+</p></li>
+
+<li><p>
+<b>For a single gene, do we need to worry about mean QTLs in LD with
+variance QTLs?</b> We previously <a href="https://github.com/YPARK/fqtl">built multivariate mean/variance QTL models</a>
+which could account for LD, and could share information between the mean
+and variance models.
+</p>
+
+<p>
+The fundamental problem is that if we assume that the mean and dispersion
+both have genetic components, then the mean is no longer independent of
+the dispersion.
+</p>
+
+<p>
+This actually could be derived without using the fact that both depend on
+the same genotypes if we use second-order Taylor expansion:
+</p>
+
+<p>
+\[ \mu \approx \log_2 \lambda + \frac{V[R]}{2 \lambda^2} \]
+</p></li>
+
+<li><p>
+<b>Do we need to share parameters between genes?</b> <code>mast</code> assumes genes are
+conditionally independent. But this is no longer true when nearby genes
+can be driven by overlapping (or correlated) <i>cis</i>-genotypes.
+</p>
+
+<p>
+We previously developed multiresponse QTL models which learned the target
+genes of causal variants, allowing the true target gene to explain away
+nearby correlated genes (<a href="https://www.biorxiv.org/content/early/2017/11/14/219428">Park et al 2017</a>).
+</p></li>
+</ol>
+</div>
+</div>
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2017-12-15 Fri 12:30</p>
+<p class="date">Created: 2017-12-15 Fri 18:56</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>
