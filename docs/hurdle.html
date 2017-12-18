@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2017-12-15 Fri 18:56 -->
+<!-- 2017-12-18 Mon 11:28 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hurdle model estimation</title>
@@ -288,11 +288,23 @@ Assuming \(r_{ij}\) follows the NB2 negative binomial model (Hilbe 2012):
 </p>
 
 <p>
-By the definition of CPM:
+Let \(L_j\) be the library size of cell \(j\). Then, by the definition of CPM:
 </p>
 
 <p>
-\[ y_{ij} = \log_2(r_{ij}) + \mathrm{const} \]
+\[ y_{ij} = \log_2(10^6 \times \frac{r_{ij}}{L_j} + 1) \]
+</p>
+
+<p>
+\[ = \log_2\left(10^6 \times \left(r_{ij} + \frac{L_j}{10^6}\right)\right) - \log_2(L_j) \]
+</p>
+
+<p>
+Assuming that \(L_j \ll 10^6\):
+</p>
+
+<p>
+\[ y_{ij} \approx \log_2(r_{ij}) - \log_2(L_j) + 6 \log_2(10) \]
 </p>
 
 <p>
@@ -345,24 +357,28 @@ variance of the observations \(Y\) can be decomposed as follows:
 <tbody>
 <tr>
 <td class="org-left">Observed</td>
-<td class="org-left">\(\exp(-X_i \beta + u_i) + X_i \gamma\)</td>
-<td class="org-left">\(X_i \beta\)</td>
+<td class="org-left">\(\exp(-(X_i \beta_\mu + u_i^\mu)) + \exp(X_i \beta_\phi)\)</td>
+<td class="org-left">\(V[X_i \beta_\mu]\)</td>
 </tr>
 
 <tr>
 <td class="org-left">Unobserved</td>
-<td class="org-left">\(\sigma^2\)</td>
-<td class="org-left">\(u_i\)</td>
+<td class="org-left">\(V[u_i^\phi + \epsilon_{ij}^\phi] = \sigma_\sigma^2\)</td>
+<td class="org-left">\(V[u_i^\mu] + V[\epsilon_{ij}^\mu] = \sigma_u^2 + \sigma_\mu^2\)</td>
 </tr>
 </tbody>
 </table>
 
 <p>
-In more detail: between individual variation is partially explained by
-<i>cis</i>-genotype, and partially explained by other sources. Within individual
-variation is partially explained by mean expression (as derived above),
-<i>cis</i>-genotype (what we hope to find), and other sources (<i>trans</i>-regulation,
-sampling variance, etc.)
+In more detail: between individual variance is explained by <i>cis</i>-genotype
+(what we hope to find), unobserved factors for each individual
+(e.g. <i>trans</i>-regulation), and sampling variance. 
+</p>
+
+<p>
+Within individual variation is explained by mean expression (as derived
+above), <i>cis</i>-genotype (what we hope to find), and other sources
+(<i>trans</i>-regulation, sampling variance, etc.). 
 </p>
 
 <p>
@@ -370,29 +386,36 @@ Accordingly, we have:
 </p>
 
 <p>
-\[ \mu_{ij} = X_i \beta + u_i - \mathrm{const} \]
+\[ \log \lambda_{ij} = X_i \beta_\mu + u_i^\mu + \epsilon^\mu_{ij} \]
 </p>
 
 <p>
-\[ \log \sigma^2_{ij} = \exp(-(X_i\beta + u_i)) + X_i \gamma + \sigma^2 \]
+\[ \log \phi_{ij} = X_i \beta_\phi + \epsilon^\phi_{ij} \]
 </p>
 
 <p>
-We can estimate the posterior \(p(\beta, \gamma, u_i \mid \cdot)\) this model
-using a combination of black-box variational inference and variational EM.
+We assume \(E[X_i \epsilon^\mu_{ij}] = 0, E[X_i \epsilon^\phi_{ij}] = 0,
+  E[\epsilon^\mu_{ij}\epsilon^\phi_{ij}] = 0\), so we can write \(\sigma^2 =
+  \sigma_\sigma^2 + \sigma_\mu^2\). Then, the likelihood of each data point is
+given by:
 </p>
 
 <p>
-<b>TODO:</b> marginalize out \(u_i\)?
+\[ y_{ij} \sim N(X_i \beta_\mu + u_i^\mu, \exp(-(X_i \beta_\mu + u_i^\mu)) + \exp(X_i \beta_\phi) + \sigma^2) \]
 </p>
 
 <p>
-<b>TODO:</b> prior specification on the correct scales for \(\beta, \gamma\)
+We can estimate the posterior \(p(\beta_\mu, \beta_\phi, u_i \mid Y, \cdot)\)
+this model using a combination of black-box variational inference and
+variational EM.
 </p>
 
 <p>
-<b>TODO:</b> verify that Edward is maximizing ELBO w.r.t. \(\sigma^2\) even
-without a variational approximation
+<b>TODO:</b> Marginalize out \(u_i\)
+</p>
+
+<p>
+<b>TODO:</b> Specify priors on the correct scales for \(\beta\)
 </p>
 </div>
 </div>
@@ -444,10 +467,16 @@ genotypes.shape
 </pre>
 
 <div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">normalizers</span> = (6 * np.log(10) - np.log(umi_qc.agg(np.<span class="org-builtin">sum</span>))) / np.log(2)
+</pre>
+</div>
+
+<div class="org-src-container">
 <pre class="src src-ipython"><span class="org-variable-name">data</span> = {<span class="org-string">'onehot'</span>: onehot,
         <span class="org-string">'genotypes'</span>: genotypes.values,
         <span class="org-string">'counts'</span>: umi_qc.loc[<span class="org-string">'ENSG00000214941'</span>].values.astype(np.float32).reshape(-1, 1),
-        <span class="org-string">'normalizers'</span>: -np.log(umi_qc.agg(np.<span class="org-builtin">sum</span>)).values.reshape(-1, 1)}
+        <span class="org-string">'log_cpm'</span>: cpm(umi_qc, log2=<span class="org-constant">True</span>).loc[<span class="org-string">'ENSG00000214941'</span>].values.astype(np.float32).reshape(-1, 1),
+        <span class="org-string">'normalizers'</span>: normalizers.values.reshape(-1, 1)}
 </pre>
 </div>
 
@@ -460,8 +489,6 @@ genotypes.shape
 <div class="org-src-container">
 <pre class="src src-ipython"><span class="org-keyword">with</span> <span class="org-builtin">open</span>(<span class="org-string">'test_data.pkl'</span>, <span class="org-string">'rb'</span>) <span class="org-keyword">as</span> f:
   <span class="org-variable-name">data</span> = pickle.load(f)
-
-<span class="org-variable-name">data</span>[<span class="org-string">'log_cpm'</span>] = np.log(data[<span class="org-string">'counts'</span>] + 1) + data[<span class="org-string">'normalizers'</span>] + 6 * np.log(10)
 </pre>
 </div>
 </div>
@@ -476,10 +503,9 @@ genotypes.shape
 
 <span class="org-variable-name">onehot</span> = tf.placeholder(tf.float32, [m, n])
 <span class="org-variable-name">genotypes</span> = tf.placeholder(tf.float32, [n, 1])
-<span class="org-variable-name">library_size</span> = tf.placeholder(tf.float32, [m, 1])
+<span class="org-variable-name">cell_bias</span> = tf.placeholder(tf.float32, [m, 1])
 
 <span class="org-variable-name">ind_bias</span> = ed.models.Normal(loc=tf.zeros([n, 1]), scale=tf.Variable(tf.ones([n, 1])))
-<span class="org-variable-name">cell_bias</span> = library_size - 6 * tf.log(10.)
 <span class="org-variable-name">rate_effect</span> = ed.models.Normal(loc=tf.zeros([1, 1]), scale=0.1 * tf.ones([1, 1]))
 <span class="org-variable-name">log_rate</span> = tf.matmul(onehot, tf.matmul(genotypes, rate_effect) + ind_bias)
 <span class="org-variable-name">mean</span> = log_rate + cell_bias
@@ -503,7 +529,7 @@ genotypes.shape
   data={
     onehot: data[<span class="org-string">'onehot'</span>],
     genotypes: data[<span class="org-string">'genotypes'</span>][:,0:1],
-    library_size: -data[<span class="org-string">'normalizers'</span>],
+    cell_bias: data[<span class="org-string">'normalizers'</span>],
     log_cpm: data[<span class="org-string">'log_cpm'</span>],
   })
 </pre>
@@ -673,7 +699,7 @@ nearby correlated genes (<a href="https://www.biorxiv.org/content/early/2017/11/
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2017-12-15 Fri 18:56</p>
+<p class="date">Created: 2017-12-18 Mon 11:28</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>

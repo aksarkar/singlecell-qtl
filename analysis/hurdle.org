@@ -14,9 +14,15 @@
   \[ E[r_{ij}] = \lambda_{ij} \]
   \[ V[r_{ij}] = \lambda_{ij} + \phi_{ij} \lambda_{ij}^2 \]
 
-  By the definition of CPM:
+  Let \(L_j\) be the library size of cell \(j\). Then, by the definition of CPM:
 
-  \[ y_{ij} = \log_2(r_{ij}) + \mathrm{const} \]
+  \[ y_{ij} = \log_2(10^6 \times \frac{r_{ij}}{L_j} + 1) \]
+
+  \[ = \log_2\left(10^6 \times \left(r_{ij} + \frac{L_j}{10^6}\right)\right) - \log_2(L_j) \]
+
+  Assuming that \(L_j \ll 10^6\):
+
+  \[ y_{ij} \approx \log_2(r_{ij}) - \log_2(L_j) + 6 \log_2(10) \]
 
   By first order Taylor expansion:
 
@@ -31,37 +37,42 @@
   \[ y_{ij} \approx N(\mu_{ij}, \sigma^2_{ij}) \]
 
   Now, we seek to write a hierarchical model for \(y\) in terms of the genotype
-  of individual \(i\) to call mean and variance QTLs. Our idea is that the
-  variance of the observations \(Y\) can be decomposed as follows:
+  of individual \(i\) to call mean and variance QTLs.
 
-  #+ATTR_HTML: :class table
-  |            | Within individual                       | Between individual |
-  |------------+-----------------------------------------+--------------------|
-  | Observed   | \(\exp(-X_i \beta + u_i) + X_i \gamma\) | \(X_i \beta\)      |
-  | Unobserved | \(\sigma^2\)                            | \(u_i\)            |
+  Our idea is to start from generalized linear models for the underlying rate
+  and dispersion:
 
-  In more detail: between individual variation is partially explained by
-  /cis/-genotype, and partially explained by other sources. Within individual
-  variation is partially explained by mean expression (as derived above),
-  /cis/-genotype (what we hope to find), and other sources (/trans/-regulation,
-  sampling variance, etc.)
+  \[ \log \lambda_{ij} = X_i \beta_\lambda + u_i^\lambda + \epsilon^\lambda_{ij} \]
 
-  Accordingly, we have:
+  \[ \log \phi_{ij} = X_i \beta_\phi + u_i^\phi + \epsilon^\phi_{ij} \]
 
-  \[ \mu_{ij} = X_i \beta + u_i - \mathrm{const} \]
+  We assume errors are uncorrelated with \(X, \beta, u\) so we can write
+  \(\sigma^2 = V[\epsilon_{ij}^\lambda] + V[\epsilon_{ij}^\phi]\)
 
-  \[ \log \sigma^2_{ij} = \exp(-(X_i\beta + u_i)) + X_i \gamma + \sigma^2 \]
+  Then, the likelihood of each data point is given by:
 
-  We can estimate the posterior \(p(\beta, \gamma, u_i \mid \cdot)\) this model
-  using a combination of black-box variational inference and variational EM.
+  \[ y_{ij} \sim N(X_i \beta_\lambda + u_i^\lambda, \exp(-(X_i \beta_\lambda +
+  u_i^\lambda)) + \exp(X_i \beta_\phi + u_i^\phi) + \sigma^2) \]
 
-  *TODO:* marginalize out \(u_i\)?
+  In this model, between individual variance is explained by /cis/-genotype
+  (\(X_i \beta_\lambda)\), unobserved factors (\(u_i^\lambda)\), and sampling
+  (\(\epsilon_{ij}^\lambda\)).
 
-  *TODO:* prior specification on the correct scales for \(\beta, \gamma\)
+  Within individual variance is explained by the rate of expression (as derived
+  above), /cis/-genotype (\(X_i \beta_\phi\)), unobserved factors \(u_i^\phi\),
+  and sampling (\(\epsilon_{ij}^\phi\)).
 
-  *TODO:* verify that Edward is maximizing ELBO w.r.t. \(\sigma^2\) even
-  without a variational approximation
-  
+  Unobserved factors are needed to account for the fact that two individuals
+  with the same genotype could still have different underlying rate and
+  dispersion of expression.
+
+  We can estimate the posterior \(p(\beta, u \mid Y, \cdot)\) this model using
+  a combination of black-box variational inference and variational EM.
+
+  *TODO:* Marginalize out \(u\)
+
+  *TODO:* Specify priors on the correct scales for \(\beta\)
+
 * Setup                                                            :noexport:
 
   #+BEGIN_SRC emacs-lisp
