@@ -87,7 +87,7 @@
   #+CALL: ipython3(venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 41442539
+  : Submitted batch job 41553795
 
   #+BEGIN_SRC ipython
     import edward as ed
@@ -216,10 +216,19 @@
   :END:
 
   #+BEGIN_SRC ipython
+    normalizers = (6 * np.log(10) - np.log(umi_qc.agg(np.sum))) / np.log(2)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+BEGIN_SRC ipython
     data = {'onehot': onehot,
             'genotypes': genotypes.values,
             'counts': umi_qc.loc['ENSG00000214941'].values.astype(np.float32).reshape(-1, 1),
-            'normalizers': -np.log(umi_qc.agg(np.sum)).values.reshape(-1, 1)}
+            'log_cpm': cpm(umi_qc, log2=True).loc['ENSG00000214941'].values.astype(np.float32).reshape(-1, 1),
+            'normalizers': normalizers.values.reshape(-1, 1)}
   #+END_SRC
 
   #+RESULTS:
@@ -235,11 +244,29 @@
   :RESULTS:
   :END:
 
+  Plot the data, its mean, and twice its standard deviation per individual:
+
+  #+BEGIN_SRC ipython :ipyfile figure/hurdle.org/data.png
+    onehot_cpm = np.ma.masked_equal(data['log_cpm'] * data['onehot'], 0)
+
+    plt.clf()
+    plt.gcf().set_size_inches(8, 6)
+    plt.scatter(x=np.where(data['onehot'] == 1)[1] + np.random.normal(scale=0.1, size=m), y=data['log_cpm'], s=2, alpha=0.5)
+    plt.errorbar(x=np.arange(n), y=onehot_cpm.mean(axis=0), yerr=2 * onehot_cpm.std(axis=0), fmt='o', c='red')
+    plt.xlabel('Individual')
+    plt.ylabel('$\log_2(CPM + 1)$')
+    plt.gca().set_xticks([])
+    plt.gcf()
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  [[file:figure/hurdle.org/data.png]]
+  :END:
+
   #+BEGIN_SRC ipython
     with open('test_data.pkl', 'rb') as f:
       data = pickle.load(f)
-
-    data['log_cpm'] = np.log(data['counts'] + 1) + data['normalizers'] + 6 * np.log(10)
   #+END_SRC
 
   #+RESULTS:
@@ -260,21 +287,26 @@
 
     onehot = tf.placeholder(tf.float32, [m, n])
     genotypes = tf.placeholder(tf.float32, [n, 1])
-    library_size = tf.placeholder(tf.float32, [m, 1])
+    cell_bias = tf.placeholder(tf.float32, [m, 1])
 
-    ind_bias = ed.models.Normal(loc=tf.zeros([n, 1]), scale=tf.Variable(tf.ones([n, 1])))
-    cell_bias = library_size - 6 * tf.log(10.)
-    rate_effect = ed.models.Normal(loc=tf.zeros([1, 1]), scale=0.1 * tf.ones([1, 1]))
+    ind_bias_scale = tf.Variable(tf.ones([n, 1]))
+    ind_bias = ed.models.NormalWithSoftplusScale(loc=tf.zeros([n, 1]), scale=ind_bias_scale)
+    rate_effect_scale = tf.Variable(tf.ones([1, 1]))
+    rate_effect = ed.models.NormalWithSoftplusScale(loc=tf.zeros([1, 1]), scale=rate_effect_scale)
     log_rate = tf.matmul(onehot, tf.matmul(genotypes, rate_effect) + ind_bias)
     mean = log_rate + cell_bias
 
-    disp_effect = ed.models.Normal(loc=tf.zeros([1, 1]), scale=0.1 * tf.ones([1, 1]))
-    disp = tf.matmul(onehot, tf.matmul(genotypes, disp_effect))
-    var = tf.exp(-log_rate) + tf.exp(disp) + tf.exp(tf.Variable(tf.zeros([1])))
+    disp_effect_scale = tf.Variable(tf.ones([1, 1]))
+    disp_bias = ed.models.NormalWithSoftplusScale(loc=tf.zeros([n, 1]), scale=ind_bias_scale)
+    disp_effect = ed.models.Normal(loc=tf.zeros([1, 1]), scale=disp_effect_scale)
+    disp = tf.matmul(onehot, tf.matmul(genotypes, disp_effect) + disp_bias)
+    resid_var_scale = tf.Variable(tf.zeros([1]))
+    var = tf.exp(-log_rate) + tf.exp(disp) + tf.exp(resid_var_scale)
 
     log_cpm = ed.models.Normal(loc=mean, scale=tf.sqrt(var))
 
     q_ind_bias = ed.models.Normal(loc=tf.Variable(tf.zeros([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
+    q_disp_bias = ed.models.Normal(loc=tf.Variable(tf.zeros([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
     q_rate_effect = ed.models.Normal(loc=tf.Variable(tf.random_normal([1, 1])), scale=tf.Variable(tf.random_normal([1, 1])))
     q_disp_effect = ed.models.Normal(loc=tf.Variable(tf.random_normal([1, 1])), scale=tf.Variable(tf.random_normal([1, 1])))
 
@@ -283,11 +315,12 @@
         rate_effect: q_rate_effect,
         ind_bias: q_ind_bias,
         disp_effect: q_disp_effect,
+        disp_bias: q_disp_bias,
       },
       data={
         onehot: data['onehot'],
         genotypes: data['genotypes'][:,0:1],
-        library_size: -data['normalizers'],
+        cell_bias: data['normalizers'],
         log_cpm: data['log_cpm'],
       })
   #+END_SRC
@@ -302,7 +335,7 @@
 
   #+RESULTS:
   :RESULTS:
-  : 1000/1000 [100%] ██████████████████████████████ Elapsed: 6s | Loss: 2302.281
+  : 1000/1000 [100%] ██████████████████████████████ Elapsed: 7s | Loss: 4225.791
   :END:
 
   #+BEGIN_SRC ipython
@@ -316,44 +349,27 @@
   :RESULTS:
   #+BEGIN_EXAMPLE
      rate_effect_mean  rate_effect_var  disp_effect_mean  disp_effect_var
-    0          0.005864         0.001925         -0.040866         0.003422
+    0         -0.005486         0.000523          0.282421         0.053938
   #+END_EXAMPLE
   :END:
 
-  Plot the distribution of the data:
+  Plot a posterior predictive draw, and the real data means and twice standard
+  deviations.
 
-  #+BEGIN_SRC ipython :ipyfile figure/voom.org/data.png
-    plt.clf()
-    plt.gcf().set_size_inches(8, 6)
-    plt.scatter(x=np.where(data['onehot'] == 1)[1] + np.random.normal(scale=0.1, size=m), y=data['log_cpm'], s=2)
-    plt.xlabel('Individual')
-    plt.ylabel('$\log_2(CPM + 1)$')
-    plt.gca().set_xticks([])
-    plt.gcf()
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  [[file:figure/voom.org/data.png]]
-  :END:
-
-  Plot a posterior predictive draw.
-
-  #+BEGIN_SRC ipython :ipyfile figure/voom.org/post-pred.png
+  #+BEGIN_SRC ipython :ipyfile figure/hurdle.org/post-pred.png
     post_pred = ed.get_session().run(
       ed.copy(log_cpm, inf.latent_vars),
       {
         onehot: data['onehot'],
         genotypes: data['genotypes'][:,0:1],
-        library_size: -data['normalizers'],
+        cell_bias: data['normalizers'],
         log_cpm: data['log_cpm'],
       })
-    est_bias = ed.get_session().run(q_ind_bias.mean()).ravel()
 
     plt.clf()
     plt.gcf().set_size_inches(8, 6)
     plt.scatter(x=np.where(data['onehot'] == 1)[1] + np.random.normal(scale=0.1, size=m), y=post_pred, s=2)
-    plt.scatter(x=np.arange(n), y=est_bias, c='red')
+    plt.errorbar(x=np.arange(n), y=onehot_cpm.mean(axis=0), yerr=2 * onehot_cpm.std(axis=0), fmt='o', c='red')
     plt.xlabel('Individual')
     plt.ylabel('$\log_2(CPM + 1)$')
     plt.gca().set_xticks([])
@@ -362,7 +378,7 @@
 
   #+RESULTS:
   :RESULTS:
-  [[file:figure/voom.org/post-pred.png]]
+  [[file:figure/hurdle.org/post-pred.png]]
   :END:
 
 * Next steps

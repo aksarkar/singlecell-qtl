@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2017-12-18 Mon 11:28 -->
+<!-- 2017-12-19 Tue 11:36 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hurdle model estimation</title>
@@ -258,9 +258,9 @@ for the JavaScript code in this tag.
 <div id="text-table-of-contents">
 <ul>
 <li><a href="#orga5b8a16">Introduction</a></li>
-<li><a href="#org43d528c">Test case</a></li>
-<li><a href="#orgc64fce9">Model specification and inference</a></li>
-<li><a href="#org9d24ba3">Next steps</a></li>
+<li><a href="#orgb2384c1">Test case</a></li>
+<li><a href="#orgef8e65e">Model specification and inference</a></li>
+<li><a href="#orged40312">Next steps</a></li>
 </ul>
 </div>
 </div>
@@ -333,85 +333,61 @@ We assume:
 
 <p>
 Now, we seek to write a hierarchical model for \(y\) in terms of the genotype
-of individual \(i\) to call mean and variance QTLs. Our idea is that the
-variance of the observations \(Y\) can be decomposed as follows:
-</p>
-
-<table class="table">
-
-
-<colgroup>
-<col  class="org-left">
-
-<col  class="org-left">
-
-<col  class="org-left">
-</colgroup>
-<thead>
-<tr>
-<th scope="col" class="org-left">&#xa0;</th>
-<th scope="col" class="org-left">Within individual</th>
-<th scope="col" class="org-left">Between individual</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td class="org-left">Observed</td>
-<td class="org-left">\(\exp(-(X_i \beta_\mu + u_i^\mu)) + \exp(X_i \beta_\phi)\)</td>
-<td class="org-left">\(V[X_i \beta_\mu]\)</td>
-</tr>
-
-<tr>
-<td class="org-left">Unobserved</td>
-<td class="org-left">\(V[u_i^\phi + \epsilon_{ij}^\phi] = \sigma_\sigma^2\)</td>
-<td class="org-left">\(V[u_i^\mu] + V[\epsilon_{ij}^\mu] = \sigma_u^2 + \sigma_\mu^2\)</td>
-</tr>
-</tbody>
-</table>
-
-<p>
-In more detail: between individual variance is explained by <i>cis</i>-genotype
-(what we hope to find), unobserved factors for each individual
-(e.g. <i>trans</i>-regulation), and sampling variance. 
+of individual \(i\) to call mean and variance QTLs.
 </p>
 
 <p>
-Within individual variation is explained by mean expression (as derived
-above), <i>cis</i>-genotype (what we hope to find), and other sources
-(<i>trans</i>-regulation, sampling variance, etc.). 
+Our idea is to start from generalized linear models for the underlying rate
+and dispersion:
 </p>
 
 <p>
-Accordingly, we have:
+\[ \log \lambda_{ij} = X_i \beta_\lambda + u_i^\lambda + \epsilon^\lambda_{ij} \]
 </p>
 
 <p>
-\[ \log \lambda_{ij} = X_i \beta_\mu + u_i^\mu + \epsilon^\mu_{ij} \]
+\[ \log \phi_{ij} = X_i \beta_\phi + u_i^\phi + \epsilon^\phi_{ij} \]
 </p>
 
 <p>
-\[ \log \phi_{ij} = X_i \beta_\phi + \epsilon^\phi_{ij} \]
+We assume errors are uncorrelated with \(X, \beta, u\) so we can write
+\(\sigma^2 = V[\epsilon_{ij}^\lambda] + V[\epsilon_{ij}^\phi]\)
 </p>
 
 <p>
-We assume \(E[X_i \epsilon^\mu_{ij}] = 0, E[X_i \epsilon^\phi_{ij}] = 0,
-  E[\epsilon^\mu_{ij}\epsilon^\phi_{ij}] = 0\), so we can write \(\sigma^2 =
-  \sigma_\sigma^2 + \sigma_\mu^2\). Then, the likelihood of each data point is
-given by:
+Then, the likelihood of each data point is given by:
 </p>
 
 <p>
-\[ y_{ij} \sim N(X_i \beta_\mu + u_i^\mu, \exp(-(X_i \beta_\mu + u_i^\mu)) + \exp(X_i \beta_\phi) + \sigma^2) \]
+\[ y_{ij} \sim N(X_i \beta_\lambda + u_i^\lambda, \exp(-(X_i \beta_\lambda +
+  u_i^\lambda)) + \exp(X_i \beta_\phi + u_i^\phi) + \sigma^2) \]
 </p>
 
 <p>
-We can estimate the posterior \(p(\beta_\mu, \beta_\phi, u_i \mid Y, \cdot)\)
-this model using a combination of black-box variational inference and
-variational EM.
+In this model, between individual variance is explained by <i>cis</i>-genotype
+(\(X_i \beta_\lambda)\), unobserved factors (\(u_i^\lambda)\), and sampling
+(\(\epsilon_{ij}^\lambda\)).
 </p>
 
 <p>
-<b>TODO:</b> Marginalize out \(u_i\)
+Within individual variance is explained by the rate of expression (as derived
+above), <i>cis</i>-genotype (\(X_i \beta_\phi\)), unobserved factors \(u_i^\phi\),
+and sampling (\(\epsilon_{ij}^\phi\)).
+</p>
+
+<p>
+Unobserved factors are needed to account for the fact that two individuals
+with the same genotype could still have different underlying rate and
+dispersion of expression.
+</p>
+
+<p>
+We can estimate the posterior \(p(\beta, u \mid Y, \cdot)\) this model using
+a combination of black-box variational inference and variational EM.
+</p>
+
+<p>
+<b>TODO:</b> Marginalize out \(u\)
 </p>
 
 <p>
@@ -420,9 +396,9 @@ variational EM.
 </div>
 </div>
 
-<div id="outline-container-org43d528c" class="outline-2">
-<h2 id="org43d528c">Test case</h2>
-<div class="outline-text-2" id="text-org43d528c">
+<div id="outline-container-orgb2384c1" class="outline-2">
+<h2 id="orgb2384c1">Test case</h2>
+<div class="outline-text-2" id="text-orgb2384c1">
 <div class="org-src-container">
 <pre class="src src-ipython">gene_info.query(<span class="org-string">'name == "ZSWIM7"'</span>)
 </pre>
@@ -486,6 +462,30 @@ genotypes.shape
 </pre>
 </div>
 
+<p>
+Plot the data, its mean, and twice its standard deviation per individual:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">onehot_cpm</span> = np.ma.masked_equal(data[<span class="org-string">'log_cpm'</span>] * data[<span class="org-string">'onehot'</span>], 0)
+
+plt.clf()
+plt.gcf().set_size_inches(8, 6)
+plt.scatter(x=np.where(data[<span class="org-string">'onehot'</span>] == 1)[1] + np.random.normal(scale=0.1, size=m), y=data[<span class="org-string">'log_cpm'</span>], s=2, alpha=0.5)
+plt.errorbar(x=np.arange(n), y=onehot_cpm.mean(axis=0), yerr=2 * onehot_cpm.std(axis=0), fmt=<span class="org-string">'o'</span>, c=<span class="org-string">'red'</span>)
+plt.xlabel(<span class="org-string">'Individual'</span>)
+plt.ylabel(<span class="org-string">'$\log_2(CPM + 1)$'</span>)
+plt.gca().set_xticks([])
+plt.gcf()
+</pre>
+</div>
+
+
+<div class="figure">
+<p><img src="figure/hurdle.org/data.png" alt="data.png">
+</p>
+</div>
+
 <div class="org-src-container">
 <pre class="src src-ipython"><span class="org-keyword">with</span> <span class="org-builtin">open</span>(<span class="org-string">'test_data.pkl'</span>, <span class="org-string">'rb'</span>) <span class="org-keyword">as</span> f:
   <span class="org-variable-name">data</span> = pickle.load(f)
@@ -494,9 +494,9 @@ genotypes.shape
 </div>
 </div>
 
-<div id="outline-container-orgc64fce9" class="outline-2">
-<h2 id="orgc64fce9">Model specification and inference</h2>
-<div class="outline-text-2" id="text-orgc64fce9">
+<div id="outline-container-orgef8e65e" class="outline-2">
+<h2 id="orgef8e65e">Model specification and inference</h2>
+<div class="outline-text-2" id="text-orgef8e65e">
 <div class="org-src-container">
 <pre class="src src-ipython"><span class="org-variable-name">m</span>, <span class="org-variable-name">n</span> = data[<span class="org-string">'onehot'</span>].shape
 <span class="org-variable-name">_</span>, <span class="org-variable-name">p</span> = data[<span class="org-string">'genotypes'</span>].shape
@@ -505,18 +505,24 @@ genotypes.shape
 <span class="org-variable-name">genotypes</span> = tf.placeholder(tf.float32, [n, 1])
 <span class="org-variable-name">cell_bias</span> = tf.placeholder(tf.float32, [m, 1])
 
-<span class="org-variable-name">ind_bias</span> = ed.models.Normal(loc=tf.zeros([n, 1]), scale=tf.Variable(tf.ones([n, 1])))
-<span class="org-variable-name">rate_effect</span> = ed.models.Normal(loc=tf.zeros([1, 1]), scale=0.1 * tf.ones([1, 1]))
+<span class="org-variable-name">ind_bias_scale</span> = tf.Variable(tf.ones([n, 1]))
+<span class="org-variable-name">ind_bias</span> = ed.models.NormalWithSoftplusScale(loc=tf.zeros([n, 1]), scale=ind_bias_scale)
+<span class="org-variable-name">rate_effect_scale</span> = tf.Variable(tf.ones([1, 1]))
+<span class="org-variable-name">rate_effect</span> = ed.models.NormalWithSoftplusScale(loc=tf.zeros([1, 1]), scale=rate_effect_scale)
 <span class="org-variable-name">log_rate</span> = tf.matmul(onehot, tf.matmul(genotypes, rate_effect) + ind_bias)
 <span class="org-variable-name">mean</span> = log_rate + cell_bias
 
-<span class="org-variable-name">disp_effect</span> = ed.models.Normal(loc=tf.zeros([1, 1]), scale=0.1 * tf.ones([1, 1]))
-<span class="org-variable-name">disp</span> = tf.matmul(onehot, tf.matmul(genotypes, disp_effect))
-<span class="org-variable-name">var</span> = tf.exp(-log_rate) + tf.exp(disp) + tf.exp(tf.Variable(tf.zeros([1])))
+<span class="org-variable-name">disp_effect_scale</span> = tf.Variable(tf.ones([1, 1]))
+<span class="org-variable-name">disp_bias</span> = ed.models.NormalWithSoftplusScale(loc=tf.zeros([n, 1]), scale=ind_bias_scale)
+<span class="org-variable-name">disp_effect</span> = ed.models.Normal(loc=tf.zeros([1, 1]), scale=disp_effect_scale)
+<span class="org-variable-name">disp</span> = tf.matmul(onehot, tf.matmul(genotypes, disp_effect) + disp_bias)
+<span class="org-variable-name">resid_var_scale</span> = tf.Variable(tf.zeros([1]))
+<span class="org-variable-name">var</span> = tf.exp(-log_rate) + tf.exp(disp) + tf.exp(resid_var_scale)
 
 <span class="org-variable-name">log_cpm</span> = ed.models.Normal(loc=mean, scale=tf.sqrt(var))
 
 <span class="org-variable-name">q_ind_bias</span> = ed.models.Normal(loc=tf.Variable(tf.zeros([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
+<span class="org-variable-name">q_disp_bias</span> = ed.models.Normal(loc=tf.Variable(tf.zeros([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
 <span class="org-variable-name">q_rate_effect</span> = ed.models.Normal(loc=tf.Variable(tf.random_normal([1, 1])), scale=tf.Variable(tf.random_normal([1, 1])))
 <span class="org-variable-name">q_disp_effect</span> = ed.models.Normal(loc=tf.Variable(tf.random_normal([1, 1])), scale=tf.Variable(tf.random_normal([1, 1])))
 
@@ -525,6 +531,7 @@ genotypes.shape
     rate_effect: q_rate_effect,
     ind_bias: q_ind_bias,
     disp_effect: q_disp_effect,
+    disp_bias: q_disp_bias,
   },
   data={
     onehot: data[<span class="org-string">'onehot'</span>],
@@ -541,7 +548,7 @@ genotypes.shape
 </div>
 
 <pre class="example">
-1000/1000 [100%] ██████████████████████████████ Elapsed: 6s | Loss: 2302.281
+1000/1000 [100%] ██████████████████████████████ Elapsed: 7s | Loss: 4225.791
 
 </pre>
 
@@ -555,32 +562,12 @@ res
 
 <pre class="example">
  rate_effect_mean  rate_effect_var  disp_effect_mean  disp_effect_var
-0          0.005864         0.001925         -0.040866         0.003422
+0         -0.005486         0.000523          0.282421         0.053938
 </pre>
 
 <p>
-Plot the distribution of the data:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython">plt.clf()
-plt.gcf().set_size_inches(8, 6)
-plt.scatter(x=np.where(data[<span class="org-string">'onehot'</span>] == 1)[1] + np.random.normal(scale=0.1, size=m), y=data[<span class="org-string">'log_cpm'</span>], s=2)
-plt.xlabel(<span class="org-string">'Individual'</span>)
-plt.ylabel(<span class="org-string">'$\log_2(CPM + 1)$'</span>)
-plt.gca().set_xticks([])
-plt.gcf()
-</pre>
-</div>
-
-
-<div class="figure">
-<p><img src="figure/voom.org/data.png" alt="data.png">
-</p>
-</div>
-
-<p>
-Plot a posterior predictive draw.
+Plot a posterior predictive draw, and the real data means and twice standard
+deviations.
 </p>
 
 <div class="org-src-container">
@@ -589,15 +576,14 @@ Plot a posterior predictive draw.
   {
     onehot: data[<span class="org-string">'onehot'</span>],
     genotypes: data[<span class="org-string">'genotypes'</span>][:,0:1],
-    library_size: -data[<span class="org-string">'normalizers'</span>],
+    cell_bias: data[<span class="org-string">'normalizers'</span>],
     log_cpm: data[<span class="org-string">'log_cpm'</span>],
   })
-<span class="org-variable-name">est_bias</span> = ed.get_session().run(q_ind_bias.mean()).ravel()
 
 plt.clf()
 plt.gcf().set_size_inches(8, 6)
 plt.scatter(x=np.where(data[<span class="org-string">'onehot'</span>] == 1)[1] + np.random.normal(scale=0.1, size=m), y=post_pred, s=2)
-plt.scatter(x=np.arange(n), y=est_bias, c=<span class="org-string">'red'</span>)
+plt.errorbar(x=np.arange(n), y=onehot_cpm.mean(axis=0), yerr=2 * onehot_cpm.std(axis=0), fmt=<span class="org-string">'o'</span>, c=<span class="org-string">'red'</span>)
 plt.xlabel(<span class="org-string">'Individual'</span>)
 plt.ylabel(<span class="org-string">'$\log_2(CPM + 1)$'</span>)
 plt.gca().set_xticks([])
@@ -607,15 +593,15 @@ plt.gcf()
 
 
 <div class="figure">
-<p><img src="figure/voom.org/post-pred.png" alt="post-pred.png">
+<p><img src="figure/hurdle.org/post-pred.png" alt="post-pred.png">
 </p>
 </div>
 </div>
 </div>
 
-<div id="outline-container-org9d24ba3" class="outline-2">
-<h2 id="org9d24ba3">Next steps</h2>
-<div class="outline-text-2" id="text-org9d24ba3">
+<div id="outline-container-orged40312" class="outline-2">
+<h2 id="orged40312">Next steps</h2>
+<div class="outline-text-2" id="text-orged40312">
 <p>
 The key idea of <code>mast</code> (<a href="https://dx.doi.org/10.1186/s13059-015-0844-5">Finak et al 2015</a>) is to model non-zero \(R\) using a
 Gaussian distribution, and model zero \(R\) using logistic regression. The
@@ -699,7 +685,7 @@ nearby correlated genes (<a href="https://www.biorxiv.org/content/early/2017/11/
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2017-12-18 Mon 11:28</p>
+<p class="date">Created: 2017-12-19 Tue 11:36</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>
