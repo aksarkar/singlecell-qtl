@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2017-12-19 Tue 11:36 -->
+<!-- 2017-12-19 Tue 15:30 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hurdle model estimation</title>
@@ -257,17 +257,17 @@ for the JavaScript code in this tag.
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents">
 <ul>
-<li><a href="#orga5b8a16">Introduction</a></li>
-<li><a href="#orgb2384c1">Test case</a></li>
+<li><a href="#orgc8dc85f">Introduction</a></li>
+<li><a href="#org4d022f2">Test case</a></li>
 <li><a href="#orgef8e65e">Model specification and inference</a></li>
-<li><a href="#orged40312">Next steps</a></li>
+<li><a href="#orgbd60d6a">Next steps</a></li>
 </ul>
 </div>
 </div>
 
-<div id="outline-container-orga5b8a16" class="outline-2">
-<h2 id="orga5b8a16">Introduction</h2>
-<div class="outline-text-2" id="text-orga5b8a16">
+<div id="outline-container-orgc8dc85f" class="outline-2">
+<h2 id="orgc8dc85f">Introduction</h2>
+<div class="outline-text-2" id="text-orgc8dc85f">
 <p>
 The key idea of <code>voom</code> (<a href="http://genomebiology.com/2014/15/2/R29">Law et al 2014</a>) is that the distribution of
 log-transformed counts per million is approximately Gaussian. Consider the
@@ -385,62 +385,53 @@ dispersion of expression.
 We can estimate the posterior \(p(\beta, u \mid Y, \cdot)\) this model using
 a combination of black-box variational inference and variational EM.
 </p>
+</div>
+</div>
 
+<div id="outline-container-org4d022f2" class="outline-2">
+<h2 id="org4d022f2">Test case</h2>
+<div class="outline-text-2" id="text-org4d022f2">
 <p>
-<b>TODO:</b> Marginalize out \(u\)
+Look at the top eQTL SNP-gene pair from the bulk RNA-sequencing data,
+<code>rs73276049</code> and <i>ZSWIM7</i>.
 </p>
 
+<pre class="example">
+                symbol        rsid  effect_size     beta_perm
+ENSG00000214941   ZSWIM7  rs73276049     1.792670  1.567000e-17
+ENSG00000145725  PPIP5K2     rs34822     1.155860  1.280260e-15
+ENSG00000164978    NUDT2   rs7848476     0.998739  6.685150e-15
+ENSG00000243317  C7orf73   rs6467603     1.371900  1.508780e-14
+ENSG00000240344    PPIL3  rs13412214    -1.343370  1.566880e-14
+</pre>
+
 <p>
-<b>TODO:</b> Specify priors on the correct scales for \(\beta\)
+Load the genotype data for <code>rs73276049</code>.
 </p>
-</div>
-</div>
-
-<div id="outline-container-orgb2384c1" class="outline-2">
-<h2 id="orgb2384c1">Test case</h2>
-<div class="outline-text-2" id="text-orgb2384c1">
-<div class="org-src-container">
-<pre class="src src-ipython">gene_info.query(<span class="org-string">'name == "ZSWIM7"'</span>)
-</pre>
-</div>
-
-<pre class="example">
-                chr     start       end    name strand      source
-gene                                                                
-ENSG00000214941  hs17  15879874  15903031  ZSWIM7      -  H. sapiens
-</pre>
 
 <div class="org-src-container">
-<pre class="src src-ipython"><span class="org-keyword">with</span> gzip.<span class="org-builtin">open</span>(<span class="org-string">'/project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz'</span>, <span class="org-string">'rt'</span>) <span class="org-keyword">as</span> f:
-  <span class="org-variable-name">header</span> = <span class="org-builtin">next</span>(f).split()
-<span class="org-variable-name">vcf</span> = tabix.<span class="org-builtin">open</span>(<span class="org-string">'/project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz'</span>)
+<pre class="src src-sh" id="orgc68f139">zcat /project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz | head -n1 | awk <span class="org-string">'{for (i=1; i &lt;= NF; i++) {if (i &gt; 9) {$i = "NA" $i}} print $0}'</span>
 </pre>
 </div>
 
 <div class="org-src-container">
-<pre class="src src-ipython"><span class="org-keyword">def</span> <span class="org-function-name">_extract_genotypes</span>(row, vcf, header, window):
-  <span class="org-keyword">if</span> row[<span class="org-string">'strand'</span>] == <span class="org-string">'+'</span>:
-    <span class="org-variable-name">start</span> = row[<span class="org-string">'start'</span>] - window
-    <span class="org-variable-name">end</span> = row[<span class="org-string">'start'</span>]
-  <span class="org-keyword">else</span>:
-    <span class="org-variable-name">start</span> = row[<span class="org-string">'end'</span>]
-    <span class="org-variable-name">end</span> = row[<span class="org-string">'end'</span>] + window
-  <span class="org-variable-name">result</span> = pd.DataFrame(<span class="org-builtin">list</span>(vcf.query(<span class="org-string">'chr{}'</span>.<span class="org-builtin">format</span>(row[<span class="org-string">'chr'</span>][2:]), start, end)), columns=header).iloc[:,9:].astype(np.float32)
-  <span class="org-keyword">return</span> result
+<pre class="src src-sh" id="org6d2f60d">zgrep -wm1 <span class="org-string">"rs73276049"</span> /project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz
 </pre>
 </div>
 
 <div class="org-src-container">
-<pre class="src src-ipython"><span class="org-variable-name">genotypes</span> = _extract_genotypes(gene_info.loc[<span class="org-string">'ENSG00000214941'</span>], vcf=vcf, header=header, window=<span class="org-builtin">int</span>(1e6)).rename(columns=<span class="org-keyword">lambda</span> x: <span class="org-string">'NA{}'</span>.<span class="org-builtin">format</span>(x))[<span class="org-builtin">sorted</span>(annotations_qc[<span class="org-string">'chip_id'</span>].unique())]
-<span class="org-variable-name">genotypes</span> = genotypes.T.transform(<span class="org-keyword">lambda</span> x: x - x.mean()).fillna(0)
-genotypes.shape
+<pre class="src src-ipython"><span class="org-variable-name">genotypes</span> = pd.Series(<span class="org-string">"""&lt;&lt;extract-geno()&gt;&gt;"""</span>[2:-2].split())
 </pre>
 </div>
 
-<pre class="example">
-(21, 2506)
-
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">genotypes.index</span> = <span class="org-string">"""&lt;&lt;extract-header()&gt;&gt;"""</span>.split()
 </pre>
+</div>
+
+<p>
+Compute library sizes and CPM.
+</p>
 
 <div class="org-src-container">
 <pre class="src src-ipython"><span class="org-variable-name">normalizers</span> = (6 * np.log(10) - np.log(umi_qc.agg(np.<span class="org-builtin">sum</span>))) / np.log(2)
@@ -449,12 +440,16 @@ genotypes.shape
 
 <div class="org-src-container">
 <pre class="src src-ipython"><span class="org-variable-name">data</span> = {<span class="org-string">'onehot'</span>: onehot,
-        <span class="org-string">'genotypes'</span>: genotypes.values,
+        <span class="org-string">'genotypes'</span>: genotypes.T[<span class="org-builtin">sorted</span>(annotations_qc[<span class="org-string">'chip_id'</span>].unique())].values.reshape(-1, 1),
         <span class="org-string">'counts'</span>: umi_qc.loc[<span class="org-string">'ENSG00000214941'</span>].values.astype(np.float32).reshape(-1, 1),
         <span class="org-string">'log_cpm'</span>: cpm(umi_qc, log2=<span class="org-constant">True</span>).loc[<span class="org-string">'ENSG00000214941'</span>].values.astype(np.float32).reshape(-1, 1),
         <span class="org-string">'normalizers'</span>: normalizers.values.reshape(-1, 1)}
 </pre>
 </div>
+
+<p>
+Write out the processed data to use as a test case.
+</p>
 
 <div class="org-src-container">
 <pre class="src src-ipython"><span class="org-keyword">with</span> <span class="org-builtin">open</span>(<span class="org-string">'test_data.pkl'</span>, <span class="org-string">'wb'</span>) <span class="org-keyword">as</span> f:
@@ -463,7 +458,7 @@ genotypes.shape
 </div>
 
 <p>
-Plot the data, its mean, and twice its standard deviation per individual:
+Plot the data, mean, and two standard deviations per individual:
 </p>
 
 <div class="org-src-container">
@@ -471,8 +466,8 @@ Plot the data, its mean, and twice its standard deviation per individual:
 
 plt.clf()
 plt.gcf().set_size_inches(8, 6)
-plt.scatter(x=np.where(data[<span class="org-string">'onehot'</span>] == 1)[1] + np.random.normal(scale=0.1, size=m), y=data[<span class="org-string">'log_cpm'</span>], s=2, alpha=0.5)
-plt.errorbar(x=np.arange(n), y=onehot_cpm.mean(axis=0), yerr=2 * onehot_cpm.std(axis=0), fmt=<span class="org-string">'o'</span>, c=<span class="org-string">'red'</span>)
+plt.scatter(x=np.where(data[<span class="org-string">'onehot'</span>] == 1)[1] + np.random.normal(scale=0.1, size=data[<span class="org-string">'onehot'</span>].shape[0]), y=data[<span class="org-string">'log_cpm'</span>], s=2, alpha=0.5)
+plt.errorbar(x=np.arange(data[<span class="org-string">'onehot'</span>].shape[1]), y=onehot_cpm.mean(axis=0), yerr=2 * onehot_cpm.std(axis=0), fmt=<span class="org-string">'o'</span>, c=<span class="org-string">'red'</span>)
 plt.xlabel(<span class="org-string">'Individual'</span>)
 plt.ylabel(<span class="org-string">'$\log_2(CPM + 1)$'</span>)
 plt.gca().set_xticks([])
@@ -486,6 +481,11 @@ plt.gcf()
 </p>
 </div>
 
+<p>
+Use this block to load the data without loading/processing the entire counts
+matrix (requires much less memory).
+</p>
+
 <div class="org-src-container">
 <pre class="src src-ipython"><span class="org-keyword">with</span> <span class="org-builtin">open</span>(<span class="org-string">'test_data.pkl'</span>, <span class="org-string">'rb'</span>) <span class="org-keyword">as</span> f:
   <span class="org-variable-name">data</span> = pickle.load(f)
@@ -497,36 +497,57 @@ plt.gcf()
 <div id="outline-container-orgef8e65e" class="outline-2">
 <h2 id="orgef8e65e">Model specification and inference</h2>
 <div class="outline-text-2" id="text-orgef8e65e">
+<p>
+We specify the model in Edward. We assume a fully factored variational
+approximation \(q(\beta_\lambda)q(\beta_\phi)q(\u^\lambda)q(u^\phi)\).
+</p>
+
 <div class="org-src-container">
-<pre class="src src-ipython"><span class="org-variable-name">m</span>, <span class="org-variable-name">n</span> = data[<span class="org-string">'onehot'</span>].shape
+<pre class="src src-ipython"><span class="org-variable-name">nonzero_cpm</span> = data[<span class="org-string">'log_cpm'</span>].ravel() &gt; 0
+<span class="org-variable-name">q</span> = nonzero_cpm.<span class="org-builtin">sum</span>()
+<span class="org-variable-name">m</span>, <span class="org-variable-name">n</span> = data[<span class="org-string">'onehot'</span>].shape
 <span class="org-variable-name">_</span>, <span class="org-variable-name">p</span> = data[<span class="org-string">'genotypes'</span>].shape
 
-<span class="org-variable-name">onehot</span> = tf.placeholder(tf.float32, [m, n])
+<span class="org-variable-name">onehot</span> = tf.placeholder(tf.float32, [q, n])
 <span class="org-variable-name">genotypes</span> = tf.placeholder(tf.float32, [n, 1])
-<span class="org-variable-name">cell_bias</span> = tf.placeholder(tf.float32, [m, 1])
+<span class="org-variable-name">cell_bias</span> = tf.placeholder(tf.float32, [q, 1])
 
-<span class="org-variable-name">ind_bias_scale</span> = tf.Variable(tf.ones([n, 1]))
+<span class="org-variable-name">ind_bias_scale</span> = tf.Variable(tf.ones([1]))
 <span class="org-variable-name">ind_bias</span> = ed.models.NormalWithSoftplusScale(loc=tf.zeros([n, 1]), scale=ind_bias_scale)
-<span class="org-variable-name">rate_effect_scale</span> = tf.Variable(tf.ones([1, 1]))
+
+<span class="org-variable-name">rate_effect_scale</span> = tf.Variable(tf.ones([1]))
 <span class="org-variable-name">rate_effect</span> = ed.models.NormalWithSoftplusScale(loc=tf.zeros([1, 1]), scale=rate_effect_scale)
+
 <span class="org-variable-name">log_rate</span> = tf.matmul(onehot, tf.matmul(genotypes, rate_effect) + ind_bias)
 <span class="org-variable-name">mean</span> = log_rate + cell_bias
 
-<span class="org-variable-name">disp_effect_scale</span> = tf.Variable(tf.ones([1, 1]))
-<span class="org-variable-name">disp_bias</span> = ed.models.NormalWithSoftplusScale(loc=tf.zeros([n, 1]), scale=ind_bias_scale)
+<span class="org-variable-name">disp_bias_scale</span> = tf.Variable(tf.ones([1]))
+<span class="org-variable-name">disp_bias</span> = ed.models.NormalWithSoftplusScale(loc=tf.zeros([n, 1]), scale=disp_bias_scale)
+
+<span class="org-variable-name">disp_effect_scale</span> = tf.Variable(tf.ones([1]))
 <span class="org-variable-name">disp_effect</span> = ed.models.Normal(loc=tf.zeros([1, 1]), scale=disp_effect_scale)
+
 <span class="org-variable-name">disp</span> = tf.matmul(onehot, tf.matmul(genotypes, disp_effect) + disp_bias)
 <span class="org-variable-name">resid_var_scale</span> = tf.Variable(tf.zeros([1]))
 <span class="org-variable-name">var</span> = tf.exp(-log_rate) + tf.exp(disp) + tf.exp(resid_var_scale)
 
 <span class="org-variable-name">log_cpm</span> = ed.models.Normal(loc=mean, scale=tf.sqrt(var))
 
-<span class="org-variable-name">q_ind_bias</span> = ed.models.Normal(loc=tf.Variable(tf.zeros([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
-<span class="org-variable-name">q_disp_bias</span> = ed.models.Normal(loc=tf.Variable(tf.zeros([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
+<span class="org-variable-name">q_ind_bias</span> = ed.models.Normal(loc=tf.Variable(tf.random_normal([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
+<span class="org-variable-name">q_disp_bias</span> = ed.models.Normal(loc=tf.Variable(tf.random_normal([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
 <span class="org-variable-name">q_rate_effect</span> = ed.models.Normal(loc=tf.Variable(tf.random_normal([1, 1])), scale=tf.Variable(tf.random_normal([1, 1])))
 <span class="org-variable-name">q_disp_effect</span> = ed.models.Normal(loc=tf.Variable(tf.random_normal([1, 1])), scale=tf.Variable(tf.random_normal([1, 1])))
+</pre>
+</div>
 
-<span class="org-variable-name">inf</span> = ed.ReparameterizationKLKLqp(
+<p>
+We optimize the evidence lower bound with respect to the variational parameters
+and model hyperparameters (scales) simultaneously using the
+reparameterization gradient and gradient descent.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">inf</span> = ed.ReparameterizationKLKLqp(
   latent_vars={
     rate_effect: q_rate_effect,
     ind_bias: q_ind_bias,
@@ -534,36 +555,70 @@ plt.gcf()
     disp_bias: q_disp_bias,
   },
   data={
-    onehot: data[<span class="org-string">'onehot'</span>],
-    genotypes: data[<span class="org-string">'genotypes'</span>][:,0:1],
-    cell_bias: data[<span class="org-string">'normalizers'</span>],
-    log_cpm: data[<span class="org-string">'log_cpm'</span>],
+    onehot: data[<span class="org-string">'onehot'</span>][nonzero_cpm],
+    genotypes: data[<span class="org-string">'genotypes'</span>],
+    cell_bias: data[<span class="org-string">'normalizers'</span>][nonzero_cpm],
+    log_cpm: data[<span class="org-string">'log_cpm'</span>][nonzero_cpm],
   })
-</pre>
-</div>
-
-<div class="org-src-container">
-<pre class="src src-ipython">inf.run(n_samples=10, optimizer=tf.train.AdamOptimizer(learning_rate=5e-2))
+inf.run(n_samples=10, optimizer=tf.train.AdamOptimizer(learning_rate=5e-2))
 </pre>
 </div>
 
 <pre class="example">
-1000/1000 [100%] ██████████████████████████████ Elapsed: 7s | Loss: 4225.791
+1000/1000 [100%] ██████████████████████████████ Elapsed: 6s | Loss: 2317.697
 
 </pre>
 
+<p>
+Compute posterior 95% credible intervals for the effect sizes:
+</p>
+
 <div class="org-src-container">
-<pre class="src src-ipython"><span class="org-variable-name">res</span> = pd.DataFrame(
-  np.hstack(ed.get_session().run([q_rate_effect.mean(), q_rate_effect.variance(), q_disp_effect.mean(), q_disp_effect.variance()])),
-  columns=[<span class="org-string">'rate_effect_mean'</span>, <span class="org-string">'rate_effect_var'</span>, <span class="org-string">'disp_effect_mean'</span>, <span class="org-string">'disp_effect_var'</span>])
+<pre class="src src-ipython"><span class="org-variable-name">res</span> = pd.DataFrame(np.hstack(ed.get_session().run(
+  [q_rate_effect.mean(),
+   1.96 * tf.sqrt(q_rate_effect.variance()),
+   q_disp_effect.mean(),
+   1.96 * tf.sqrt(q_disp_effect.variance())])),
+  columns=[<span class="org-string">'rate_effect_mean'</span>, <span class="org-string">'rate_effect_ci'</span>, <span class="org-string">'disp_effect_mean'</span>, <span class="org-string">'disp_effect_ci'</span>])
 res
 </pre>
 </div>
 
 <pre class="example">
- rate_effect_mean  rate_effect_var  disp_effect_mean  disp_effect_var
-0         -0.005486         0.000523          0.282421         0.053938
+ rate_effect_mean  rate_effect_ci  disp_effect_mean  disp_effect_ci
+0          1.807363        0.066596         -0.006338         0.05111
 </pre>
+
+<p>
+Estimate posterior 95% credible intervals for the bias terms:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">res</span> = pd.DataFrame(np.hstack(ed.get_session().run(
+  [q_ind_bias.mean(),
+   1.96 * tf.sqrt(q_ind_bias.variance()),
+   q_disp_bias.mean(),
+   1.96 * tf.sqrt(q_ind_bias.variance())]
+)))
+plt.clf()
+<span class="org-variable-name">fig</span>, <span class="org-variable-name">ax</span> = plt.subplots(2, 1)
+ax[0].errorbar(x=res.index, y=res[0], yerr=res[1], fmt=<span class="org-string">'o'</span>)
+ax[0].set_xticks([])
+ax[0].set_xlabel(<span class="org-string">''</span>)
+ax[0].set_ylabel(<span class="org-string">'Rate bias'</span>)
+ax[1].errorbar(x=res.index, y=res[2], yerr=res[3], fmt=<span class="org-string">'o'</span>)
+ax[1].set_xticks([])
+ax[1].set_xlabel(<span class="org-string">'Individual'</span>)
+ax[1].set_ylabel(<span class="org-string">'Dispersion bias'</span>)
+plt.gcf()
+</pre>
+</div>
+
+
+<div class="figure">
+<p><img src="figure/hurdle.org/bias.png" alt="bias.png">
+</p>
+</div>
 
 <p>
 Plot a posterior predictive draw, and the real data means and twice standard
@@ -574,15 +629,15 @@ deviations.
 <pre class="src src-ipython"><span class="org-variable-name">post_pred</span> = ed.get_session().run(
   ed.copy(log_cpm, inf.latent_vars),
   {
-    onehot: data[<span class="org-string">'onehot'</span>],
+    onehot: data[<span class="org-string">'onehot'</span>][nonzero_cpm],
     genotypes: data[<span class="org-string">'genotypes'</span>][:,0:1],
-    cell_bias: data[<span class="org-string">'normalizers'</span>],
-    log_cpm: data[<span class="org-string">'log_cpm'</span>],
+    cell_bias: data[<span class="org-string">'normalizers'</span>][nonzero_cpm],
+    log_cpm: data[<span class="org-string">'log_cpm'</span>][nonzero_cpm],
   })
 
 plt.clf()
 plt.gcf().set_size_inches(8, 6)
-plt.scatter(x=np.where(data[<span class="org-string">'onehot'</span>] == 1)[1] + np.random.normal(scale=0.1, size=m), y=post_pred, s=2)
+plt.scatter(x=np.where(data[<span class="org-string">'onehot'</span>][nonzero_cpm] == 1)[1] + np.random.normal(scale=0.1, size=q), y=post_pred, s=2)
 plt.errorbar(x=np.arange(n), y=onehot_cpm.mean(axis=0), yerr=2 * onehot_cpm.std(axis=0), fmt=<span class="org-string">'o'</span>, c=<span class="org-string">'red'</span>)
 plt.xlabel(<span class="org-string">'Individual'</span>)
 plt.ylabel(<span class="org-string">'$\log_2(CPM + 1)$'</span>)
@@ -599,9 +654,9 @@ plt.gcf()
 </div>
 </div>
 
-<div id="outline-container-orged40312" class="outline-2">
-<h2 id="orged40312">Next steps</h2>
-<div class="outline-text-2" id="text-orged40312">
+<div id="outline-container-orgbd60d6a" class="outline-2">
+<h2 id="orgbd60d6a">Next steps</h2>
+<div class="outline-text-2" id="text-orgbd60d6a">
 <p>
 The key idea of <code>mast</code> (<a href="https://dx.doi.org/10.1186/s13059-015-0844-5">Finak et al 2015</a>) is to model non-zero \(R\) using a
 Gaussian distribution, and model zero \(R\) using logistic regression. The
@@ -685,7 +740,7 @@ nearby correlated genes (<a href="https://www.biorxiv.org/content/early/2017/11/
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2017-12-19 Tue 11:36</p>
+<p class="date">Created: 2017-12-19 Tue 15:30</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>
