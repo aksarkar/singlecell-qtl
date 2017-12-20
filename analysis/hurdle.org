@@ -84,7 +84,7 @@
   #+CALL: ipython3(venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 41590915
+  : Submitted batch job 41592446
 
   #+BEGIN_SRC ipython
     import edward as ed
@@ -280,13 +280,13 @@
     genotypes = tf.placeholder(tf.float32, [n, 1])
     cell_bias = tf.placeholder(tf.float32, [q, 1])
 
-    ind_bias_scale = tf.exp(tf.Variable(tf.ones([1])))
-    ind_bias = ed.models.Normal(loc=tf.zeros([n, 1]), scale=ind_bias_scale)
+    rate_bias_scale = tf.exp(tf.Variable(tf.ones([1])))
+    rate_bias = ed.models.Normal(loc=tf.zeros([n, 1]), scale=rate_bias_scale)
 
     rate_effect_scale = tf.exp(tf.Variable(tf.ones([1])))
     rate_effect = ed.models.Normal(loc=tf.zeros([1, 1]), scale=rate_effect_scale)
 
-    log_rate = tf.matmul(onehot, tf.matmul(genotypes, rate_effect) + ind_bias)
+    log_rate = tf.matmul(onehot, tf.matmul(genotypes, rate_effect) + rate_bias)
     mean = log_rate + cell_bias
 
     disp_bias_scale = tf.exp(tf.Variable(tf.ones([1])))
@@ -301,7 +301,7 @@
 
     log_cpm = ed.models.Normal(loc=mean, scale=tf.sqrt(var))
 
-    q_ind_bias = ed.models.NormalWithSoftplusScale(loc=tf.Variable(tf.random_normal([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
+    q_rate_bias = ed.models.NormalWithSoftplusScale(loc=tf.Variable(tf.random_normal([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
     q_disp_bias = ed.models.NormalWithSoftplusScale(loc=tf.Variable(tf.random_normal([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
     q_rate_effect = ed.models.NormalWithSoftplusScale(loc=tf.Variable(tf.random_normal([1, 1])), scale=tf.Variable(tf.random_normal([1, 1])))
     q_disp_effect = ed.models.NormalWithSoftplusScale(loc=tf.Variable(tf.random_normal([1, 1])), scale=tf.Variable(tf.random_normal([1, 1])))
@@ -315,11 +315,11 @@
   and model hyperparameters (scales) simultaneously using the
   reparameterization gradient and gradient descent.
 
-  #+BEGIN_SRC ipython
+  #+BEGIN_SRC ipython :results output
     inf = ed.ReparameterizationKLKLqp(
       latent_vars={
         rate_effect: q_rate_effect,
-        ind_bias: q_ind_bias,
+        rate_bias: q_rate_bias,
         disp_effect: q_disp_effect,
         disp_bias: q_disp_bias,
       },
@@ -329,12 +329,11 @@
         cell_bias: data['normalizers'][nonzero_cpm],
         log_cpm: data['log_cpm'][nonzero_cpm],
       })
-    inf.run(n_samples=10, optimizer=tf.train.AdamOptimizer(learning_rate=5e-2))
+    inf.run(n_samples=10, n_print=1000, optimizer=tf.train.AdamOptimizer(learning_rate=5e-2))
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  : 1000/1000 [100%] ██████████████████████████████ Elapsed: 8s | Loss: 2315.045
   :END:
 
   Tabulate the estimated hyperparameters:
@@ -343,7 +342,7 @@
     pd.DataFrame(ed.get_session().run(
       [resid_var_scale,
        rate_effect_scale,
-       ind_bias_scale,
+       rate_bias_scale,
        disp_effect_scale,
        disp_bias_scale]))
   #+END_SRC
@@ -352,11 +351,11 @@
   :RESULTS:
   #+BEGIN_EXAMPLE
             0
-    0  0.008109
-    1  1.785125
-    2  0.930144
-    3  0.019294
-    4  0.305007
+    0  0.033170
+    1  1.831064
+    2  0.933768
+    3  0.021410
+    4  0.333740
   #+END_EXAMPLE
   :END:
 
@@ -376,7 +375,7 @@
   :RESULTS:
   #+BEGIN_EXAMPLE
      rate_effect_mean  rate_effect_ci  disp_effect_mean  disp_effect_ci
-    0          1.811013        0.077898         -0.005509        0.038054
+    0          1.778338        0.088868         -0.005528        0.040109
   #+END_EXAMPLE
   :END:
 
@@ -384,10 +383,10 @@
 
   #+BEGIN_SRC ipython :ipyfile figure/hurdle.org/bias.png
     res = pd.DataFrame(np.hstack(ed.get_session().run(
-      [q_ind_bias.mean(),
-       1.96 * tf.sqrt(q_ind_bias.variance()),
+      [q_rate_bias.mean(),
+       1.96 * tf.sqrt(q_rate_bias.variance()),
        q_disp_bias.mean(),
-       1.96 * tf.sqrt(q_ind_bias.variance())]
+       1.96 * tf.sqrt(q_disp_bias.variance())]
     )))
     plt.clf()
     fig, ax = plt.subplots(2, 1)
@@ -444,7 +443,7 @@
   #+BEGIN_SRC ipython
     pd.DataFrame(np.hstack([
       onehot_cpm.var(axis=0).filled().reshape(-1, 1),
-      ed.get_session().run(tf.exp(-tf.matmul(genotypes, q_rate_effect.mean()) - q_ind_bias.mean()), {onehot: data['onehot'][nonzero_cpm], genotypes: data['genotypes'], cell_bias: data['normalizers'][nonzero_cpm]}),
+      ed.get_session().run(tf.exp(-tf.matmul(genotypes, q_rate_effect.mean()) - q_rate_bias.mean()), {onehot: data['onehot'][nonzero_cpm], genotypes: data['genotypes'], cell_bias: data['normalizers'][nonzero_cpm]}),
       ed.get_session().run(tf.exp(tf.matmul(genotypes, q_disp_effect.mean()) + q_disp_bias.mean()), {onehot: data['onehot'][nonzero_cpm], genotypes: data['genotypes'], cell_bias: data['normalizers'][nonzero_cpm]})
     ]), columns=['sample_var', 'mean_component', 'disp_component'])
   #+END_SRC
@@ -453,27 +452,27 @@
   :RESULTS:
   #+BEGIN_EXAMPLE
       sample_var  mean_component  disp_component
-    0     0.871253        0.302830        1.118143
-    1     0.685687        0.288532        0.619445
-    2     0.832976        0.156608        0.971450
-    3     0.700838        0.201736        0.719656
-    4     0.814616        0.274285        0.666530
-    5     0.691467        0.333145        0.607604
-    6     0.783659        0.192529        1.115879
-    7     0.802240        0.149890        1.041115
-    8     0.834025        0.244234        1.002957
-    9     0.772049        0.227092        0.910875
-    10    0.473087        0.141089        0.815421
-    11    0.849796        0.278309        0.724199
-    12    0.866909        0.139993        0.909418
-    13    1.008157        0.169650        1.079417
-    14    0.534548        0.137537        0.923383
-    15    0.577289        0.136400        1.124875
-    16    0.592843        0.183967        0.855929
-    17    0.868248        0.262581        0.881569
-    18    0.643367        0.183501        0.850260
-    19    0.610603        0.150725        0.781642
-    20    0.561710        0.275817        0.672184
+    0     0.871253        0.298329        1.114019
+    1     0.685687        0.287167        0.640863
+    2     0.832976        0.159951        0.965856
+    3     0.700838        0.201023        0.691661
+    4     0.814616        0.286287        0.668536
+    5     0.691467        0.338760        0.586068
+    6     0.783659        0.189187        1.144669
+    7     0.802240        0.148922        0.988516
+    8     0.834025        0.235027        0.944307
+    9     0.772049        0.249792        0.860103
+    10    0.473087        0.138666        0.834449
+    11    0.849796        0.286646        0.688878
+    12    0.866909        0.148218        0.906789
+    13    1.008157        0.168500        1.100925
+    14    0.534548        0.147212        0.874713
+    15    0.577289        0.141847        1.087143
+    16    0.592843        0.174559        0.780635
+    17    0.868248        0.250584        0.808446
+    18    0.643367        0.177204        0.868894
+    19    0.610603        0.151856        0.739383
+    20    0.561710        0.272148        0.618180
   #+END_EXAMPLE
   :END:
 
@@ -487,30 +486,135 @@
   #+RESULTS:
   :RESULTS:
   #+BEGIN_EXAMPLE
-  array([[ 1.08771348],
-           [ 0.67666239],
-           [ 1.02014589],
-           [ 0.7174871 ],
-           [ 0.73400629],
-           [ 0.60470819],
-           [ 1.13071108],
-           [ 1.08213329],
-           [ 1.0003413 ],
-           [ 0.86023176],
-           [ 0.82803261],
-           [ 0.70752406],
-           [ 0.91508389],
-           [ 1.10532486],
-           [ 0.89808285],
-           [ 1.13777578],
-           [ 0.83974165],
-           [ 0.81459731],
-           [ 0.88679075],
-           [ 0.82396138],
-           [ 0.67643213]], dtype=float32)
+  array([[ 1.11401916],
+           [ 0.64086318],
+           [ 0.97120959],
+           [ 0.69166064],
+           [ 0.66853553],
+           [ 0.58606839],
+           [ 1.15101397],
+           [ 0.99399483],
+           [ 0.94430727],
+           [ 0.86010265],
+           [ 0.83868515],
+           [ 0.68887818],
+           [ 0.91181493],
+           [ 1.10702729],
+           [ 0.87956131],
+           [ 1.0931685 ],
+           [ 0.78496206],
+           [ 0.80844623],
+           [ 0.87371033],
+           [ 0.74348116],
+           [ 0.61817998]], dtype=float32)
   #+END_EXAMPLE
   :END:
   
+* Model comparison
+
+  Compare against a model without overdispersion:
+
+  #+CALL: reset()
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+BEGIN_SRC ipython
+    nonzero_cpm = data['log_cpm'].ravel() > 0
+    q = nonzero_cpm.sum()
+    m, n = data['onehot'].shape
+    _, p = data['genotypes'].shape
+
+    onehot = tf.placeholder(tf.float32, [q, n])
+    genotypes = tf.placeholder(tf.float32, [n, 1])
+    cell_bias = tf.placeholder(tf.float32, [q, 1])
+
+    rate_bias_scale = tf.exp(tf.Variable(tf.ones([1])))
+    rate_bias = ed.models.Normal(loc=tf.zeros([n, 1]), scale=rate_bias_scale)
+
+    rate_effect_scale = tf.exp(tf.Variable(tf.ones([1])))
+    rate_effect = ed.models.Normal(loc=tf.zeros([1, 1]), scale=rate_effect_scale)
+
+    log_rate = tf.matmul(onehot, tf.matmul(genotypes, rate_effect) + rate_bias)
+    mean = log_rate + cell_bias
+
+    resid_var_scale = tf.exp(tf.Variable(tf.zeros([1])))
+    var = tf.exp(-log_rate) + resid_var_scale
+
+    log_cpm = ed.models.Normal(loc=mean, scale=tf.sqrt(var))
+
+    q_rate_bias = ed.models.NormalWithSoftplusScale(loc=tf.Variable(tf.random_normal([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
+    q_rate_effect = ed.models.NormalWithSoftplusScale(loc=tf.Variable(tf.random_normal([1, 1])), scale=tf.Variable(tf.random_normal([1, 1])))
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+BEGIN_SRC ipython :results output
+    inf = ed.ReparameterizationKLKLqp(
+      latent_vars={
+        rate_effect: q_rate_effect,
+        rate_bias: q_rate_bias,
+      },
+      data={
+        onehot: data['onehot'][nonzero_cpm],
+        genotypes: data['genotypes'],
+        cell_bias: data['normalizers'][nonzero_cpm],
+        log_cpm: data['log_cpm'][nonzero_cpm],
+      })
+    inf.run(n_samples=10, n_print=1000, optimizer=tf.train.AdamOptimizer(learning_rate=5e-2))
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+BEGIN_SRC ipython
+    pd.DataFrame(ed.get_session().run(
+      [resid_var_scale,
+       rate_effect_scale,
+       rate_bias_scale]))
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  #+BEGIN_EXAMPLE
+            0
+    0  0.831572
+    1  1.754516
+    2  0.949026
+  #+END_EXAMPLE
+  :END:
+
+  #+BEGIN_SRC ipython :ipyfile figure/hurdle.org/post-pred-no-overdispersion.png
+    post_pred = ed.get_session().run(
+      ed.copy(log_cpm, inf.latent_vars),
+      {
+        onehot: data['onehot'][nonzero_cpm],
+        genotypes: data['genotypes'][:,0:1],
+        cell_bias: data['normalizers'][nonzero_cpm],
+        log_cpm: data['log_cpm'][nonzero_cpm],
+      })
+
+    plt.clf()
+    plt.gcf().set_size_inches(8, 6)
+    plt.scatter(x=np.where(data['onehot'][nonzero_cpm] == 1)[1] + np.random.normal(scale=0.1, size=q), y=post_pred, s=2)
+    plt.errorbar(x=np.arange(n), y=onehot_cpm.mean(axis=0), yerr=2 * onehot_cpm.std(axis=0), fmt='o', c='red')
+    plt.xlabel('Individual')
+    plt.ylabel('$\log_2(CPM + 1)$')
+    plt.gca().set_xticks([])
+    plt.gcf()
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  [[file:figure/hurdle.org/post-pred-no-overdispersion.png]]
+  :END:
+
+
+
 * Next steps
 
   1. *Do we need to fit a multivariate model?* Doing inference one SNP at a
