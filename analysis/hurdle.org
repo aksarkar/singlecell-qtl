@@ -51,7 +51,7 @@
 
   Then, the likelihood of each data point is given by:
 
-  \[ y_{ij} \sim N(X_i \beta_\lambda + u_i^\lambda, \exp(-(X_i \beta_\lambda +
+  \[ y_{ij} \sim N(X_i \beta_\lambda + u_i^\lambda + \mathrm{const}, \exp(-(X_i \beta_\lambda +
   u_i^\lambda)) + \exp(X_i \beta_\phi + u_i^\phi) + \sigma^2) \]
 
   In this model, between individual variance is explained by /cis/-genotype
@@ -59,12 +59,13 @@
   (\(\epsilon_{ij}^\lambda\)).
 
   Within individual variance is explained by the rate of expression (as derived
-  above), /cis/-genotype (\(X_i \beta_\phi\)), unobserved factors \(u_i^\phi\),
-  and sampling (\(\epsilon_{ij}^\phi\)).
+  above), /cis/-genotype (\(X_i \beta_\phi\)), unobserved factors
+  (\(u_i^\phi\)), and sampling (\(\epsilon_{ij}^\phi\)).
 
   Unobserved factors are needed to account for the fact that two individuals
   with the same genotype could still have different underlying rate and
-  dispersion of expression.
+  dispersion of expression, and that genes may not be overdispersed
+  (i.e. \(\beta_\phi = 0, u_i^\phi \rightarrow -\infty\)).
 
   We can estimate the posterior \(p(\beta, u \mid Y, \cdot)\) this model using
   a combination of black-box variational inference and variational EM.
@@ -160,11 +161,6 @@
 
   Load the genotype data for ~rs73276049~.
 
-  #+NAME: extract-header
-  #+BEGIN_SRC sh :eval never-export
-    zcat /project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz | head -n1 | awk '{for (i=1; i <= NF; i++) {if (i > 9) {$i = "NA" $i}} print $0}'
-  #+END_SRC
-
   #+NAME: extract-geno
   #+BEGIN_SRC sh :eval never-export
     zgrep -wm1 "rs73276049" /project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz
@@ -177,6 +173,11 @@
   #+RESULTS:
   :RESULTS:
   :END:
+
+  #+NAME: extract-header
+  #+BEGIN_SRC sh :eval never-export
+    zcat /project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz | head -n1 | awk '{for (i=1; i <= NF; i++) {if (i > 9) {$i = "NA" $i}} print $0}'
+  #+END_SRC
 
   #+BEGIN_SRC ipython :noweb no-export :exports code
     genotypes.index = """<<extract-header()>>""".split()
