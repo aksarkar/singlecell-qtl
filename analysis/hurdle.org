@@ -280,24 +280,23 @@
     genotypes = tf.placeholder(tf.float32, [n, 1])
     cell_bias = tf.placeholder(tf.float32, [q, 1])
 
-    resid_var_scale = tf.exp(tf.Variable(tf.zeros([1])))
-
-    ind_bias_scale = tf.exp(tf.Variable(tf.ones([1]))) * resid_var_scale
+    ind_bias_scale = tf.exp(tf.Variable(tf.ones([1])))
     ind_bias = ed.models.Normal(loc=tf.zeros([n, 1]), scale=ind_bias_scale)
 
-    rate_effect_scale = tf.exp(tf.Variable(tf.ones([1]))) * resid_var_scale
+    rate_effect_scale = tf.exp(tf.Variable(tf.ones([1])))
     rate_effect = ed.models.Normal(loc=tf.zeros([1, 1]), scale=rate_effect_scale)
 
     log_rate = tf.matmul(onehot, tf.matmul(genotypes, rate_effect) + ind_bias)
     mean = log_rate + cell_bias
 
-    disp_bias_scale = tf.exp(tf.Variable(tf.ones([1]))) * resid_var_scale
+    disp_bias_scale = tf.exp(tf.Variable(tf.ones([1])))
     disp_bias = ed.models.Normal(loc=tf.zeros([n, 1]), scale=disp_bias_scale)
 
-    disp_effect_scale = tf.exp(tf.Variable(tf.ones([1]))) * resid_var_scale
+    disp_effect_scale = tf.exp(tf.Variable(tf.ones([1])))
     disp_effect = ed.models.Normal(loc=tf.zeros([1, 1]), scale=disp_effect_scale)
 
     disp = tf.matmul(onehot, tf.matmul(genotypes, disp_effect) + disp_bias)
+    resid_var_scale = tf.exp(tf.Variable(tf.zeros([1])))
     var = tf.exp(-log_rate) + tf.exp(disp) + resid_var_scale
 
     log_cpm = ed.models.Normal(loc=mean, scale=tf.sqrt(var))
