@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2017-12-19 Tue 15:30 -->
+<!-- 2017-12-20 Wed 10:22 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hurdle model estimation</title>
@@ -458,13 +458,17 @@ Write out the processed data to use as a test case.
 </div>
 
 <p>
-Plot the data, mean, and two standard deviations per individual:
+Plot the data, mean, and two standard deviations per individual (restricted
+to non-zero CPM values):
 </p>
 
 <div class="org-src-container">
 <pre class="src src-ipython"><span class="org-variable-name">onehot_cpm</span> = np.ma.masked_equal(data[<span class="org-string">'log_cpm'</span>] * data[<span class="org-string">'onehot'</span>], 0)
+</pre>
+</div>
 
-plt.clf()
+<div class="org-src-container">
+<pre class="src src-ipython">plt.clf()
 plt.gcf().set_size_inches(8, 6)
 plt.scatter(x=np.where(data[<span class="org-string">'onehot'</span>] == 1)[1] + np.random.normal(scale=0.1, size=data[<span class="org-string">'onehot'</span>].shape[0]), y=data[<span class="org-string">'log_cpm'</span>], s=2, alpha=0.5)
 plt.errorbar(x=np.arange(data[<span class="org-string">'onehot'</span>].shape[1]), y=onehot_cpm.mean(axis=0), yerr=2 * onehot_cpm.std(axis=0), fmt=<span class="org-string">'o'</span>, c=<span class="org-string">'red'</span>)
@@ -499,7 +503,7 @@ matrix (requires much less memory).
 <div class="outline-text-2" id="text-orgef8e65e">
 <p>
 We specify the model in Edward. We assume a fully factored variational
-approximation \(q(\beta_\lambda)q(\beta_\phi)q(\u^\lambda)q(u^\phi)\).
+approximation \(q(\beta_\lambda)q(\beta_\phi)q(u^\lambda)q(u^\phi)\).
 </p>
 
 <div class="org-src-container">
@@ -512,31 +516,32 @@ approximation \(q(\beta_\lambda)q(\beta_\phi)q(\u^\lambda)q(u^\phi)\).
 <span class="org-variable-name">genotypes</span> = tf.placeholder(tf.float32, [n, 1])
 <span class="org-variable-name">cell_bias</span> = tf.placeholder(tf.float32, [q, 1])
 
-<span class="org-variable-name">ind_bias_scale</span> = tf.Variable(tf.ones([1]))
-<span class="org-variable-name">ind_bias</span> = ed.models.NormalWithSoftplusScale(loc=tf.zeros([n, 1]), scale=ind_bias_scale)
+<span class="org-variable-name">resid_var_scale</span> = tf.exp(tf.Variable(tf.zeros([1])))
 
-<span class="org-variable-name">rate_effect_scale</span> = tf.Variable(tf.ones([1]))
-<span class="org-variable-name">rate_effect</span> = ed.models.NormalWithSoftplusScale(loc=tf.zeros([1, 1]), scale=rate_effect_scale)
+<span class="org-variable-name">ind_bias_scale</span> = tf.exp(tf.Variable(tf.ones([1]))) * resid_var_scale
+<span class="org-variable-name">ind_bias</span> = ed.models.Normal(loc=tf.zeros([n, 1]), scale=ind_bias_scale)
+
+<span class="org-variable-name">rate_effect_scale</span> = tf.exp(tf.Variable(tf.ones([1]))) * resid_var_scale
+<span class="org-variable-name">rate_effect</span> = ed.models.Normal(loc=tf.zeros([1, 1]), scale=rate_effect_scale)
 
 <span class="org-variable-name">log_rate</span> = tf.matmul(onehot, tf.matmul(genotypes, rate_effect) + ind_bias)
 <span class="org-variable-name">mean</span> = log_rate + cell_bias
 
-<span class="org-variable-name">disp_bias_scale</span> = tf.Variable(tf.ones([1]))
-<span class="org-variable-name">disp_bias</span> = ed.models.NormalWithSoftplusScale(loc=tf.zeros([n, 1]), scale=disp_bias_scale)
+<span class="org-variable-name">disp_bias_scale</span> = tf.exp(tf.Variable(tf.ones([1]))) * resid_var_scale
+<span class="org-variable-name">disp_bias</span> = ed.models.Normal(loc=tf.zeros([n, 1]), scale=disp_bias_scale)
 
-<span class="org-variable-name">disp_effect_scale</span> = tf.Variable(tf.ones([1]))
+<span class="org-variable-name">disp_effect_scale</span> = tf.exp(tf.Variable(tf.ones([1]))) * resid_var_scale
 <span class="org-variable-name">disp_effect</span> = ed.models.Normal(loc=tf.zeros([1, 1]), scale=disp_effect_scale)
 
 <span class="org-variable-name">disp</span> = tf.matmul(onehot, tf.matmul(genotypes, disp_effect) + disp_bias)
-<span class="org-variable-name">resid_var_scale</span> = tf.Variable(tf.zeros([1]))
-<span class="org-variable-name">var</span> = tf.exp(-log_rate) + tf.exp(disp) + tf.exp(resid_var_scale)
+<span class="org-variable-name">var</span> = tf.exp(-log_rate) + tf.exp(disp) + resid_var_scale
 
 <span class="org-variable-name">log_cpm</span> = ed.models.Normal(loc=mean, scale=tf.sqrt(var))
 
-<span class="org-variable-name">q_ind_bias</span> = ed.models.Normal(loc=tf.Variable(tf.random_normal([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
-<span class="org-variable-name">q_disp_bias</span> = ed.models.Normal(loc=tf.Variable(tf.random_normal([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
-<span class="org-variable-name">q_rate_effect</span> = ed.models.Normal(loc=tf.Variable(tf.random_normal([1, 1])), scale=tf.Variable(tf.random_normal([1, 1])))
-<span class="org-variable-name">q_disp_effect</span> = ed.models.Normal(loc=tf.Variable(tf.random_normal([1, 1])), scale=tf.Variable(tf.random_normal([1, 1])))
+<span class="org-variable-name">q_ind_bias</span> = ed.models.NormalWithSoftplusScale(loc=tf.Variable(tf.random_normal([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
+<span class="org-variable-name">q_disp_bias</span> = ed.models.NormalWithSoftplusScale(loc=tf.Variable(tf.random_normal([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
+<span class="org-variable-name">q_rate_effect</span> = ed.models.NormalWithSoftplusScale(loc=tf.Variable(tf.random_normal([1, 1])), scale=tf.Variable(tf.random_normal([1, 1])))
+<span class="org-variable-name">q_disp_effect</span> = ed.models.NormalWithSoftplusScale(loc=tf.Variable(tf.random_normal([1, 1])), scale=tf.Variable(tf.random_normal([1, 1])))
 </pre>
 </div>
 
@@ -565,8 +570,31 @@ inf.run(n_samples=10, optimizer=tf.train.AdamOptimizer(learning_rate=5e-2))
 </div>
 
 <pre class="example">
-1000/1000 [100%] ██████████████████████████████ Elapsed: 6s | Loss: 2317.697
+1000/1000 [100%] ██████████████████████████████ Elapsed: 8s | Loss: 2315.045
 
+</pre>
+
+<p>
+Tabulate the estimated hyperparameters:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython">pd.DataFrame(ed.get_session().run(
+  [resid_var_scale,
+   rate_effect_scale,
+   ind_bias_scale,
+   disp_effect_scale,
+   disp_bias_scale]))
+</pre>
+</div>
+
+<pre class="example">
+        0
+0  0.008109
+1  1.785125
+2  0.930144
+3  0.019294
+4  0.305007
 </pre>
 
 <p>
@@ -586,7 +614,7 @@ res
 
 <pre class="example">
  rate_effect_mean  rate_effect_ci  disp_effect_mean  disp_effect_ci
-0          1.807363        0.066596         -0.006338         0.05111
+0          1.811013        0.077898         -0.005509        0.038054
 </pre>
 
 <p>
@@ -651,47 +679,118 @@ plt.gcf()
 <p><img src="figure/hurdle.org/post-pred.png" alt="post-pred.png">
 </p>
 </div>
+
+<p>
+Investigate the terms of the variance model to understand why the posterior
+predictive distribution has larger variance than the original data. Compare
+the sample variance of non-zero CPM between cells within each individual to
+the estimated variance (plugging in the estimated posterior means into the
+model).
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython">pd.DataFrame(np.hstack([
+  onehot_cpm.var(axis=0).filled().reshape(-1, 1),
+  ed.get_session().run(tf.exp(-tf.matmul(genotypes, q_rate_effect.mean()) - q_ind_bias.mean()), {onehot: data[<span class="org-string">'onehot'</span>][nonzero_cpm], genotypes: data[<span class="org-string">'genotypes'</span>], cell_bias: data[<span class="org-string">'normalizers'</span>][nonzero_cpm]}),
+  ed.get_session().run(tf.exp(tf.matmul(genotypes, q_disp_effect.mean()) + q_disp_bias.mean()), {onehot: data[<span class="org-string">'onehot'</span>][nonzero_cpm], genotypes: data[<span class="org-string">'genotypes'</span>], cell_bias: data[<span class="org-string">'normalizers'</span>][nonzero_cpm]})
+]), columns=[<span class="org-string">'sample_var'</span>, <span class="org-string">'mean_component'</span>, <span class="org-string">'disp_component'</span>])
+</pre>
+</div>
+
+<pre class="example">
+  sample_var  mean_component  disp_component
+0     0.871253        0.302830        1.118143
+1     0.685687        0.288532        0.619445
+2     0.832976        0.156608        0.971450
+3     0.700838        0.201736        0.719656
+4     0.814616        0.274285        0.666530
+5     0.691467        0.333145        0.607604
+6     0.783659        0.192529        1.115879
+7     0.802240        0.149890        1.041115
+8     0.834025        0.244234        1.002957
+9     0.772049        0.227092        0.910875
+10    0.473087        0.141089        0.815421
+11    0.849796        0.278309        0.724199
+12    0.866909        0.139993        0.909418
+13    1.008157        0.169650        1.079417
+14    0.534548        0.137537        0.923383
+15    0.577289        0.136400        1.124875
+16    0.592843        0.183967        0.855929
+17    0.868248        0.262581        0.881569
+18    0.643367        0.183501        0.850260
+19    0.610603        0.150725        0.781642
+20    0.561710        0.275817        0.672184
+</pre>
+
+<p>
+The dispersion effect is close to zero, which suggests that the problem is
+with the estimation of \(u_i^\phi\):
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython">ed.get_session().run(tf.exp(q_disp_bias.mean()), {onehot: data[<span class="org-string">'onehot'</span>][nonzero_cpm], genotypes: data[<span class="org-string">'genotypes'</span>], cell_bias: data[<span class="org-string">'normalizers'</span>][nonzero_cpm]})
+</pre>
+</div>
+
+<pre class="example">
+array([[ 1.08771348],
+         [ 0.67666239],
+         [ 1.02014589],
+         [ 0.7174871 ],
+         [ 0.73400629],
+         [ 0.60470819],
+         [ 1.13071108],
+         [ 1.08213329],
+         [ 1.0003413 ],
+         [ 0.86023176],
+         [ 0.82803261],
+         [ 0.70752406],
+         [ 0.91508389],
+         [ 1.10532486],
+         [ 0.89808285],
+         [ 1.13777578],
+         [ 0.83974165],
+         [ 0.81459731],
+         [ 0.88679075],
+         [ 0.82396138],
+         [ 0.67643213]], dtype=float32)
+</pre>
 </div>
 </div>
 
 <div id="outline-container-orgbd60d6a" class="outline-2">
 <h2 id="orgbd60d6a">Next steps</h2>
 <div class="outline-text-2" id="text-orgbd60d6a">
-<p>
-The key idea of <code>mast</code> (<a href="https://dx.doi.org/10.1186/s13059-015-0844-5">Finak et al 2015</a>) is to model non-zero \(R\) using a
-Gaussian distribution, and model zero \(R\) using logistic regression. The
-key distinction between this approach and the <a href="zinb.html">zero-inflated
-negative binomial model</a> is that zeroes are assumed to arise from only one
-process.
-</p>
-
-<p>
-This naturally suggests a Bayesian model which simultaneously calls mean and
-variance QTLs based on the likelihood:
-</p>
-
-<p>
-\[ Y \mid Y = 0 \sim \mathrm{Bernoulli}(1 - \mathrm{sigmoid}(AX\theta_m + \delta)) \]
-</p>
-
-<p>
-\[ Y \mid Y > 0 \sim N(AX\theta_m + \delta, \exp(-AX\theta_m - \delta) +
-  \exp(AX\theta_v) + \sigma^2) \]
-</p>
-
-<p>
-where \(\delta\) is a known constant that depends on library size, \(A\) maps
-from cells to individuals, and \(X\) is the genotype matrix.
-</p>
-
-<p>
-The key issues are:
-</p>
-
 <ol class="org-ol">
+<li><b>Do we need to fit a multivariate model?</b> Doing inference one SNP at a
+time will be slow (6s per SNP). We should be able to fit a multivariate
+regression with the spike and slab prior in roughly the same amount of
+time. However, inference of the corresponding variational approximation is
+only guaranteed to find a SNP in LD with the causal variant (Carbonetto
+and Stephens 2012), and is known to overstate the confidence in its
+posterior inclusion probability (Park et al. 2016).</li>
+
 <li><p>
-<b>Do we need to actually fit the dropout model?</b> <code>mast</code> conditions on the
-observed \(Y = 0\), not on a latent \(Z = 0\), which means we could simply
+<b>Do we need to actually fit a dropout model?</b> The key idea of <code>mast</code>
+(<a href="https://dx.doi.org/10.1186/s13059-015-0844-5">Finak et al 2015</a>) is to model non-zero \(R\) using a Gaussian
+distribution, and model zero \(R\) using logistic regression.
+</p>
+
+<p>
+This can be easily be incorporated in the BBVI algorithm (although likely
+not in the Edward probabilistic programming language).
+</p>
+
+<p>
+Incorporating the mean expression model as well as other known covariates
+into the dropout model might allow us to reliably estimate the mean
+parameters (i.e., reduce their posterior variance) even for genes with
+moderate levels of zero-inflation.
+</p>
+
+<p>
+We might choose not to model zeros because <code>mast</code> conditions on the
+observed \(Y = 0\), not on a latent \(Z = 0\). This means we could simply
 do the same and ignore zeros.
 </p>
 
@@ -740,7 +839,7 @@ nearby correlated genes (<a href="https://www.biorxiv.org/content/early/2017/11/
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2017-12-19 Tue 15:30</p>
+<p class="date">Created: 2017-12-20 Wed 10:22</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>
