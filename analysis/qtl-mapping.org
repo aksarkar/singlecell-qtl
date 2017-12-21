@@ -30,7 +30,7 @@
   #+CALL: ipython3(memory="16G", venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 40916778
+  : Submitted batch job 41610560
 
   #+BEGIN_SRC ipython
     import functools
@@ -57,6 +57,11 @@
 
   #+CALL: load-data()
 
+  #+RESULTS:
+  :RESULTS:
+  : ((20327, 2261), (34608, 15))
+  :END:
+
 * Quality control on expression
 
   Filter out cells on percent spike-in and gene detection rate, and filter out
@@ -82,6 +87,11 @@
     umi_qc.shape
   #+END_SRC
 
+  #+RESULTS: umi-qc
+  :RESULTS:
+  : (15636, 1810)
+  :END:
+
   #+RESULTS:
   :RESULTS:
   : (15636, 1861)
@@ -92,6 +102,23 @@
     individuals = sorted(annotations_qc['chip_id'].unique())
     onehot = np.zeros((umi_qc.shape[1], len(individuals)), dtype=np.float32)
     onehot[np.arange(onehot.shape[0]),annotations_qc['chip_id'].apply(lambda x: individuals.index(x))] = 1
+  #+END_SRC
+
+  #+RESULTS: onehot-qc
+  :RESULTS:
+  :END:
+
+  #+BEGIN_SRC ipython :async t
+    umi_qc.to_csv('/scratch/midway2/aksarkar/singlecell/umi-qc.txt.gz', sep=' ', compression='gzip')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+BEGIN_SRC ipython
+    onehot = pd.DataFrame(onehot, columns=individuals, index=umi_qc.columns)
+    onehot.to_csv('/scratch/midway2/aksarkar/singlecell/onehot-qc.txt.gz', sep=' ', compression='gzip')
   #+END_SRC
 
   #+RESULTS:

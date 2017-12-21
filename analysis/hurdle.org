@@ -613,8 +613,6 @@
   [[file:figure/hurdle.org/post-pred-no-overdispersion.png]]
   :END:
 
-
-
 * Next steps
 
   1. *Do we need to fit a multivariate model?* Doing inference one SNP at a
