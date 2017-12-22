@@ -84,7 +84,7 @@
   #+CALL: ipython3(venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 41592446
+  : Submitted batch job 41623764
 
   #+BEGIN_SRC ipython
     import edward as ed
@@ -95,6 +95,7 @@
     import numpy as np
     import pandas as pd
     import pickle
+    import scipy.stats
     import tabix
     import tensorflow as tf
   #+END_SRC
@@ -145,7 +146,7 @@
   :RESULTS:
   :END:
 
-* Test case
+* Univariate test case
 
   Look at the top eQTL SNP-gene pair from the bulk RNA-sequencing data,
   ~rs73276049~ and /ZSWIM7/.
@@ -250,6 +251,7 @@
   Use this block to load the data without loading/processing the entire counts
   matrix (requires much less memory).
 
+  #+NAME: load-test-case
   #+BEGIN_SRC ipython
     with open('test_data.pkl', 'rb') as f:
       data = pickle.load(f)
@@ -261,6 +263,12 @@
 
 * Model specification and inference
 
+  #+CALL: load-test-case()
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
   #+CALL: reset()
 
   #+RESULTS:
@@ -270,6 +278,7 @@
   We specify the model in Edward. We assume a fully factored variational
   approximation \(q(\beta_\lambda)q(\beta_\phi)q(u^\lambda)q(u^\phi)\).
 
+  #+NAME: model-def
   #+BEGIN_SRC ipython
     nonzero_cpm = data['log_cpm'].ravel() > 0
     q = nonzero_cpm.sum()
@@ -277,14 +286,14 @@
     _, p = data['genotypes'].shape
 
     onehot = tf.placeholder(tf.float32, [q, n])
-    genotypes = tf.placeholder(tf.float32, [n, 1])
+    genotypes = tf.placeholder(tf.float32, [n, p])
     cell_bias = tf.placeholder(tf.float32, [q, 1])
 
     rate_bias_scale = tf.exp(tf.Variable(tf.ones([1])))
     rate_bias = ed.models.Normal(loc=tf.zeros([n, 1]), scale=rate_bias_scale)
 
     rate_effect_scale = tf.exp(tf.Variable(tf.ones([1])))
-    rate_effect = ed.models.Normal(loc=tf.zeros([1, 1]), scale=rate_effect_scale)
+    rate_effect = ed.models.Normal(loc=tf.zeros([p, 1]), scale=rate_effect_scale)
 
     log_rate = tf.matmul(onehot, tf.matmul(genotypes, rate_effect) + rate_bias)
     mean = log_rate + cell_bias
@@ -293,7 +302,7 @@
     disp_bias = ed.models.Normal(loc=tf.zeros([n, 1]), scale=disp_bias_scale)
 
     disp_effect_scale = tf.exp(tf.Variable(tf.ones([1])))
-    disp_effect = ed.models.Normal(loc=tf.zeros([1, 1]), scale=disp_effect_scale)
+    disp_effect = ed.models.Normal(loc=tf.zeros([p, 1]), scale=disp_effect_scale)
 
     disp = tf.matmul(onehot, tf.matmul(genotypes, disp_effect) + disp_bias)
     resid_var_scale = tf.exp(tf.Variable(tf.zeros([1])))
@@ -301,11 +310,24 @@
 
     log_cpm = ed.models.Normal(loc=mean, scale=tf.sqrt(var))
 
-    q_rate_bias = ed.models.NormalWithSoftplusScale(loc=tf.Variable(tf.random_normal([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
-    q_disp_bias = ed.models.NormalWithSoftplusScale(loc=tf.Variable(tf.random_normal([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
-    q_rate_effect = ed.models.NormalWithSoftplusScale(loc=tf.Variable(tf.random_normal([1, 1])), scale=tf.Variable(tf.random_normal([1, 1])))
-    q_disp_effect = ed.models.NormalWithSoftplusScale(loc=tf.Variable(tf.random_normal([1, 1])), scale=tf.Variable(tf.random_normal([1, 1])))
+    q_rate_bias = ed.models.NormalWithSoftplusScale(
+      loc=tf.Variable(tf.random_normal([n, 1])),
+      scale=tf.Variable(tf.ones([n, 1])))
+    q_disp_bias = ed.models.NormalWithSoftplusScale(
+      loc=tf.Variable(tf.random_normal([n, 1])),
+      scale=tf.Variable(tf.ones([n, 1])))
+
+    q_rate_effect = ed.models.NormalWithSoftplusScale(
+      loc=tf.Variable(tf.random_normal([p, 1], stddev=0.1)),
+      scale=tf.Variable(tf.fill([p, 1], -8.)))
+    q_disp_effect = ed.models.NormalWithSoftplusScale(
+      loc=tf.Variable(tf.random_normal([p, 1], stddev=0.1)),
+      scale=tf.Variable(tf.fill([p, 1], -8.)))
   #+END_SRC
+
+  #+RESULTS: model-def
+  :RESULTS:
+  :END:
 
   #+RESULTS:
   :RESULTS:
@@ -315,6 +337,7 @@
   and model hyperparameters (scales) simultaneously using the
   reparameterization gradient and gradient descent.
 
+  #+NAME: inference
   #+BEGIN_SRC ipython :results output
     inf = ed.ReparameterizationKLKLqp(
       latent_vars={
@@ -329,6 +352,13 @@
         cell_bias: data['normalizers'][nonzero_cpm],
         log_cpm: data['log_cpm'][nonzero_cpm],
       })
+  #+END_SRC
+
+  #+RESULTS: inference
+  :RESULTS:
+  :END:
+
+  #+BEGIN_SRC ipython
     inf.run(n_samples=10, n_print=1000, optimizer=tf.train.AdamOptimizer(learning_rate=5e-2))
   #+END_SRC
 
@@ -338,29 +368,38 @@
 
   Tabulate the estimated hyperparameters:
 
+  #+NAME: print-hyperparams
   #+BEGIN_SRC ipython
-    pd.DataFrame(ed.get_session().run(
-      [resid_var_scale,
-       rate_effect_scale,
-       rate_bias_scale,
-       disp_effect_scale,
-       disp_bias_scale]))
+    pd.DataFrame(
+      ed.get_session().run(
+        [resid_var_scale,
+         rate_effect_scale,
+         rate_bias_scale,
+         disp_effect_scale,
+         disp_bias_scale,
+        ]),
+      index=['resid_var_scale',
+             'rate_effect_scale',
+             'rate_bias_scale',
+             'disp_effect_scale',
+             'disp_bias_scale'])
   #+END_SRC
 
-  #+RESULTS:
+  #+RESULTS: print-hyperparams
   :RESULTS:
   #+BEGIN_EXAMPLE
-            0
-    0  0.033170
-    1  1.831064
-    2  0.933768
-    3  0.021410
-    4  0.333740
+                            0
+    resid_var_scale    0.008320
+    rate_effect_scale  1.789584
+    rate_bias_scale    0.932777
+    disp_effect_scale  0.018626
+    disp_bias_scale    0.314646
   #+END_EXAMPLE
   :END:
 
   Compute posterior 95% credible intervals for the effect sizes:
 
+  #+NAME: print-effect-sizes
   #+BEGIN_SRC ipython
     res = pd.DataFrame(np.hstack(ed.get_session().run(
       [q_rate_effect.mean(),
@@ -371,11 +410,11 @@
     res
   #+END_SRC
 
-  #+RESULTS:
+  #+RESULTS: print-effect-sizes
   :RESULTS:
   #+BEGIN_EXAMPLE
      rate_effect_mean  rate_effect_ci  disp_effect_mean  disp_effect_ci
-    0          1.778338        0.088868         -0.005528        0.040109
+    0          1.792302        0.073195         -0.003314        0.035052
   #+END_EXAMPLE
   :END:
 
@@ -452,27 +491,27 @@
   :RESULTS:
   #+BEGIN_EXAMPLE
       sample_var  mean_component  disp_component
-    0     0.871253        0.298329        1.114019
-    1     0.685687        0.287167        0.640863
-    2     0.832976        0.159951        0.965856
-    3     0.700838        0.201023        0.691661
-    4     0.814616        0.286287        0.668536
-    5     0.691467        0.338760        0.586068
-    6     0.783659        0.189187        1.144669
-    7     0.802240        0.148922        0.988516
-    8     0.834025        0.235027        0.944307
-    9     0.772049        0.249792        0.860103
-    10    0.473087        0.138666        0.834449
-    11    0.849796        0.286646        0.688878
-    12    0.866909        0.148218        0.906789
-    13    1.008157        0.168500        1.100925
-    14    0.534548        0.147212        0.874713
-    15    0.577289        0.141847        1.087143
-    16    0.592843        0.174559        0.780635
-    17    0.868248        0.250584        0.808446
-    18    0.643367        0.177204        0.868894
-    19    0.610603        0.151856        0.739383
-    20    0.561710        0.272148        0.618180
+    0     0.871253        0.297413        1.116377
+    1     0.685687        0.282990        0.647191
+    2     0.832976        0.159781        0.967025
+    3     0.700838        0.197719        0.718751
+    4     0.814616        0.283947        0.682625
+    5     0.691467        0.334075        0.615903
+    6     0.783659        0.196551        1.178612
+    7     0.802240        0.150031        1.096487
+    8     0.834025        0.242036        1.006448
+    9     0.772049        0.234511        0.885288
+    10    0.473087        0.148331        0.819748
+    11    0.849796        0.277787        0.665290
+    12    0.866909        0.148379        0.950069
+    13    1.008157        0.178938        1.106427
+    14    0.534548        0.146360        0.912476
+    15    0.577289        0.146111        1.109558
+    16    0.592843        0.192143        0.861032
+    17    0.868248        0.244231        0.828985
+    18    0.643367        0.177224        0.819485
+    19    0.610603        0.153846        0.782633
+    20    0.561710        0.275283        0.635205
   #+END_EXAMPLE
   :END:
 
@@ -486,33 +525,55 @@
   #+RESULTS:
   :RESULTS:
   #+BEGIN_EXAMPLE
-  array([[ 1.11401916],
-           [ 0.64086318],
-           [ 0.97120959],
-           [ 0.69166064],
-           [ 0.66853553],
-           [ 0.58606839],
-           [ 1.15101397],
-           [ 0.99399483],
-           [ 0.94430727],
-           [ 0.86010265],
-           [ 0.83868515],
-           [ 0.68887818],
-           [ 0.91181493],
-           [ 1.10702729],
-           [ 0.87956131],
-           [ 1.0931685 ],
-           [ 0.78496206],
-           [ 0.80844623],
-           [ 0.87371033],
-           [ 0.74348116],
-           [ 0.61817998]], dtype=float32)
+  array([[ 1.11637723],
+           [ 0.64719135],
+           [ 0.97023523],
+           [ 0.71875077],
+           [ 0.6826247 ],
+           [ 0.6159026 ],
+           [ 1.18252456],
+           [ 1.10012722],
+           [ 1.00644839],
+           [ 0.88528788],
+           [ 0.82224023],
+           [ 0.66529012],
+           [ 0.95322323],
+           [ 1.11009932],
+           [ 0.91550487],
+           [ 1.11324096],
+           [ 0.86389071],
+           [ 0.82898474],
+           [ 0.82220507],
+           [ 0.78523099],
+           [ 0.63520527]], dtype=float32)
   #+END_EXAMPLE
   :END:
   
-* Model comparison
+* Multivariate test case
 
-  Compare against a model without overdispersion:
+  #+CALL: load-test-case()
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  #+BEGIN_SRC ipython
+    onehot = pd.read_table("/scratch/midway2/aksarkar/singlecell/onehot-qc.txt.gz", sep=' ', index_col=0)
+    header = pd.read_table('/project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz', nrows=1)
+    vcf = tabix.open('/project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz')
+    genotypes_df = (pd.DataFrame(list(vcf.query('chr17', 15879874 - int(1e6), 15903031 + int(1e6))), columns=header.columns)
+                 .set_index('ID')
+                 .rename(columns=lambda x: 'NA{}'.format(x) if x.startswith('1') else x)
+                 .align(onehot, axis=1, join='inner')[0]
+                 .astype(np.float32)
+                 .transform(lambda x: x - x.mean(), axis=1)
+                 .fillna(0.))
+    data['genotypes'] = genotypes_df.values.T
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
 
   #+CALL: reset()
 
@@ -520,102 +581,92 @@
   :RESULTS:
   :END:
 
-  #+BEGIN_SRC ipython
-    nonzero_cpm = data['log_cpm'].ravel() > 0
-    q = nonzero_cpm.sum()
-    m, n = data['onehot'].shape
-    _, p = data['genotypes'].shape
-
-    onehot = tf.placeholder(tf.float32, [q, n])
-    genotypes = tf.placeholder(tf.float32, [n, 1])
-    cell_bias = tf.placeholder(tf.float32, [q, 1])
-
-    rate_bias_scale = tf.exp(tf.Variable(tf.ones([1])))
-    rate_bias = ed.models.Normal(loc=tf.zeros([n, 1]), scale=rate_bias_scale)
-
-    rate_effect_scale = tf.exp(tf.Variable(tf.ones([1])))
-    rate_effect = ed.models.Normal(loc=tf.zeros([1, 1]), scale=rate_effect_scale)
-
-    log_rate = tf.matmul(onehot, tf.matmul(genotypes, rate_effect) + rate_bias)
-    mean = log_rate + cell_bias
-
-    resid_var_scale = tf.exp(tf.Variable(tf.zeros([1])))
-    var = tf.exp(-log_rate) + resid_var_scale
-
-    log_cpm = ed.models.Normal(loc=mean, scale=tf.sqrt(var))
-
-    q_rate_bias = ed.models.NormalWithSoftplusScale(loc=tf.Variable(tf.random_normal([n, 1])), scale=tf.Variable(tf.ones([n, 1])))
-    q_rate_effect = ed.models.NormalWithSoftplusScale(loc=tf.Variable(tf.random_normal([1, 1])), scale=tf.Variable(tf.random_normal([1, 1])))
-  #+END_SRC
+  #+CALL: model-def()
 
   #+RESULTS:
   :RESULTS:
   :END:
 
-  #+BEGIN_SRC ipython :results output
-    inf = ed.ReparameterizationKLKLqp(
-      latent_vars={
-        rate_effect: q_rate_effect,
-        rate_bias: q_rate_bias,
-      },
-      data={
-        onehot: data['onehot'][nonzero_cpm],
-        genotypes: data['genotypes'],
-        cell_bias: data['normalizers'][nonzero_cpm],
-        log_cpm: data['log_cpm'][nonzero_cpm],
-      })
-    inf.run(n_samples=10, n_print=1000, optimizer=tf.train.AdamOptimizer(learning_rate=5e-2))
-  #+END_SRC
+  #+CALL: inference()
 
   #+RESULTS:
   :RESULTS:
   :END:
 
   #+BEGIN_SRC ipython
-    pd.DataFrame(ed.get_session().run(
-      [resid_var_scale,
-       rate_effect_scale,
-       rate_bias_scale]))
+    inf.run(n_samples=10, n_iter=2000, optimizer=tf.train.AdamOptimizer(learning_rate=1e-2))
   #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  : 2000/2000 [100%] ██████████████████████████████ Elapsed: 22s | Loss: 2615.818
+  :END:
+
+  #+CALL: print-hyperparams()
 
   #+RESULTS:
   :RESULTS:
   #+BEGIN_EXAMPLE
-            0
-    0  0.831572
-    1  1.754516
-    2  0.949026
+                            0
+    resid_var_scale    1.194719
+    rate_effect_scale  0.014356
+    rate_bias_scale    1.563909
+    disp_effect_scale  0.028698
+    disp_bias_scale    3.358373
   #+END_EXAMPLE
   :END:
 
-  #+BEGIN_SRC ipython :ipyfile figure/hurdle.org/post-pred-no-overdispersion.png
-    post_pred = ed.get_session().run(
-      ed.copy(log_cpm, inf.latent_vars),
-      {
-        onehot: data['onehot'][nonzero_cpm],
-        genotypes: data['genotypes'][:,0:1],
-        cell_bias: data['normalizers'][nonzero_cpm],
-        log_cpm: data['log_cpm'][nonzero_cpm],
-      })
+  Compute local false sign rate using the model posterior.
 
-    plt.clf()
-    plt.gcf().set_size_inches(8, 6)
-    plt.scatter(x=np.where(data['onehot'][nonzero_cpm] == 1)[1] + np.random.normal(scale=0.1, size=q), y=post_pred, s=2)
-    plt.errorbar(x=np.arange(n), y=onehot_cpm.mean(axis=0), yerr=2 * onehot_cpm.std(axis=0), fmt='o', c='red')
-    plt.xlabel('Individual')
-    plt.ylabel('$\log_2(CPM + 1)$')
-    plt.gca().set_xticks([])
-    plt.gcf()
+  #+BEGIN_SRC ipython
+    _cdf = scipy.stats.norm().cdf
+
+    def lfsr(mean, var):
+      neg_prob = _cdf(-mean / np.sqrt(var))
+      pos_prob = 1 - neg_prob
+      return np.minimum(pos_prob, neg_prob)
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  [[file:figure/hurdle.org/post-pred-no-overdispersion.png]]
   :END:
+
+  #+BEGIN_SRC ipython
+    res = pd.DataFrame(np.hstack(ed.get_session().run(
+      [q_rate_effect.mean(),
+       tf.sqrt(q_rate_effect.variance()),
+       q_disp_effect.mean(),
+       tf.sqrt(q_disp_effect.variance())])),
+      columns=['rate_effect_mean', 'rate_effect_var', 'disp_effect_mean', 'disp_effect_var'],
+      index=genotypes_df.index)
+    res['rate_effect_lfsr'] = lfsr(res["rate_effect_mean"], res["rate_effect_var"])
+    res['disp_effect_lfsr'] = lfsr(res["disp_effect_mean"], res["disp_effect_var"])
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  Top mean-effect QTLs (by lfsr)
+
+  #+BEGIN_SRC 
+    res.sort_values('rate_effect_lfsr', ascending=True).head()
+  #+END_SRC
+
+  Top dispersion-effect QTLs (by lfsr)
+
+  #+BEGIN_SRC 
+    res.sort_values('disp_effect_lfsr', ascending=True).head()
+  #+END_SRC
 
 * Next steps
 
-  1. *Do we need to fit a multivariate model?* Doing inference one SNP at a
+  1. *Do we need to worry about the residual variance estimate being
+     incorrect?*
+
+  2. *Do we need to worry about tuning the initialization?*
+
+  3. *Do we need to fit a multivariate model?* Doing inference one SNP at a
      time will be slow (6s per SNP). We should be able to fit a multivariate
      regression with the spike and slab prior in roughly the same amount of
      time. However, inference of the corresponding variational approximation is
@@ -623,7 +674,7 @@
      and Stephens 2012), and is known to overstate the confidence in its
      posterior inclusion probability (Park et al. 2016).
 
-  2. *Do we need to actually fit a dropout model?* The key idea of ~mast~
+  4. *Do we need to actually fit a dropout model?* The key idea of ~mast~
      ([[https://dx.doi.org/10.1186/s13059-015-0844-5][Finak et al 2015]]) is to model non-zero \(R\) using a Gaussian
      distribution, and model zero \(R\) using logistic regression.
 
@@ -643,7 +694,7 @@
      robust for genes with high dropout. This might not be a problem depending
      on the stringency of gene filtering.
 
-  3. *For a single gene, do we need to worry about mean QTLs in LD with
+  5. *For a single gene, do we need to worry about mean QTLs in LD with
      variance QTLs?* We previously [[https://github.com/YPARK/fqtl][built multivariate mean/variance QTL models]]
      which could account for LD, and could share information between the mean
      and variance models.
@@ -657,7 +708,7 @@
 
      \[ \mu \approx \log_2 \lambda + \frac{V[R]}{2 \lambda^2} \]
 
-  4. *Do we need to share parameters between genes?* ~mast~ assumes genes are
+  6. *Do we need to share parameters between genes?* ~mast~ assumes genes are
      conditionally independent. But this is no longer true when nearby genes
      can be driven by overlapping (or correlated) /cis/-genotypes.
 
