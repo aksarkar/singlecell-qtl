@@ -67,8 +67,14 @@
   dispersion of expression, and that genes may not be overdispersed
   (i.e. \(\beta_\phi = 0, u_i^\phi \rightarrow -\infty\)).
 
-  We can estimate the posterior \(p(\beta, u \mid Y, \cdot)\) this model using
-  a combination of black-box variational inference and variational EM.
+  The key idea of ~mast~ ([[https://dx.doi.org/10.1186/s13059-015-0844-5][Finak et al 2015]]) is to model non-zero \(R\) using a
+  Gaussian distribution, and model zero \(R\) using logistic regression. We
+  modify the model accordingly:
+
+  \[ y_{ij} \mid y_{ij} > 0 \sim N(X_i \beta_\lambda + u_i^\lambda + \mathrm{const}, \exp(-(X_i \beta_\lambda + u_i^\lambda)) + \exp(X_i \beta_\phi + u_i^\phi) + \sigma^2) \]
+
+  We can estimate the posterior \(p(\beta, u \mid Y, \cdot)\) using a
+  combination of black-box variational inference and variational EM.
 
 * Setup                                                            :noexport:
 
@@ -84,7 +90,7 @@
   #+CALL: ipython3(venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 41623764
+  : Submitted batch job 41739712
 
   #+BEGIN_SRC ipython
     import edward as ed
@@ -257,7 +263,7 @@
       data = pickle.load(f)
   #+END_SRC
 
-  #+RESULTS:
+  #+RESULTS: load-test-case
   :RESULTS:
   :END:
 
@@ -277,6 +283,9 @@
 
   We specify the model in Edward. We assume a fully factored variational
   approximation \(q(\beta_\lambda)q(\beta_\phi)q(u^\lambda)q(u^\phi)\).
+
+  Special care needs to be taken with the prior \(p(u^\phi)\) because the
+  implied variance is too large if \(u^\phi = 0\).
 
   #+NAME: model-def
   #+BEGIN_SRC ipython
@@ -299,13 +308,13 @@
     mean = log_rate + cell_bias
 
     disp_bias_scale = tf.exp(tf.Variable(tf.ones([1])))
-    disp_bias = ed.models.Normal(loc=tf.zeros([n, 1]), scale=disp_bias_scale)
+    disp_bias = ed.models.Normal(loc=tf.fill([n, 1], -10.), scale=disp_bias_scale)
 
     disp_effect_scale = tf.exp(tf.Variable(tf.ones([1])))
     disp_effect = ed.models.Normal(loc=tf.zeros([p, 1]), scale=disp_effect_scale)
 
     disp = tf.matmul(onehot, tf.matmul(genotypes, disp_effect) + disp_bias)
-    resid_var_scale = tf.exp(tf.Variable(tf.zeros([1])))
+    resid_var_scale = tf.exp(tf.Variable(tf.constant(data['log_cpm'][nonzero_cpm].var())))
     var = tf.exp(-log_rate) + tf.exp(disp) + resid_var_scale
 
     log_cpm = ed.models.Normal(loc=mean, scale=tf.sqrt(var))
@@ -314,7 +323,7 @@
       loc=tf.Variable(tf.random_normal([n, 1])),
       scale=tf.Variable(tf.ones([n, 1])))
     q_disp_bias = ed.models.NormalWithSoftplusScale(
-      loc=tf.Variable(tf.random_normal([n, 1])),
+      loc=tf.Variable(tf.random_normal([n, 1], mean=-10)),
       scale=tf.Variable(tf.ones([n, 1])))
 
     q_rate_effect = ed.models.NormalWithSoftplusScale(
@@ -358,12 +367,13 @@
   :RESULTS:
   :END:
 
-  #+BEGIN_SRC ipython
+  #+BEGIN_SRC ipython :results output
     inf.run(n_samples=10, n_print=1000, optimizer=tf.train.AdamOptimizer(learning_rate=5e-2))
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
+  : 1000/1000 [100%] ██████████████████████████████ Elapsed: 6s | Loss: 2314.966
   :END:
 
   Tabulate the estimated hyperparameters:
@@ -388,12 +398,12 @@
   #+RESULTS: print-hyperparams
   :RESULTS:
   #+BEGIN_EXAMPLE
-                            0
-    resid_var_scale    0.008320
-    rate_effect_scale  1.789584
-    rate_bias_scale    0.932777
-    disp_effect_scale  0.018626
-    disp_bias_scale    0.314646
+                               0
+    resid_var_scale       0.831836
+    rate_effect_scale    [1.79292]
+    rate_bias_scale     [0.944154]
+    disp_effect_scale  [0.0327109]
+    disp_bias_scale      [1.88607]
   #+END_EXAMPLE
   :END:
 
@@ -414,7 +424,7 @@
   :RESULTS:
   #+BEGIN_EXAMPLE
      rate_effect_mean  rate_effect_ci  disp_effect_mean  disp_effect_ci
-    0          1.792302        0.073195         -0.003314        0.035052
+    0          1.794225        0.075665         -0.000046         0.06413
   #+END_EXAMPLE
   :END:
 
@@ -491,64 +501,59 @@
   :RESULTS:
   #+BEGIN_EXAMPLE
       sample_var  mean_component  disp_component
-    0     0.871253        0.297413        1.116377
-    1     0.685687        0.282990        0.647191
-    2     0.832976        0.159781        0.967025
-    3     0.700838        0.197719        0.718751
-    4     0.814616        0.283947        0.682625
-    5     0.691467        0.334075        0.615903
-    6     0.783659        0.196551        1.178612
-    7     0.802240        0.150031        1.096487
-    8     0.834025        0.242036        1.006448
-    9     0.772049        0.234511        0.885288
-    10    0.473087        0.148331        0.819748
-    11    0.849796        0.277787        0.665290
-    12    0.866909        0.148379        0.950069
-    13    1.008157        0.178938        1.106427
-    14    0.534548        0.146360        0.912476
-    15    0.577289        0.146111        1.109558
-    16    0.592843        0.192143        0.861032
-    17    0.868248        0.244231        0.828985
-    18    0.643367        0.177224        0.819485
-    19    0.610603        0.153846        0.782633
-    20    0.561710        0.275283        0.635205
+    0     0.871253        0.303846        0.000045
+    1     0.685687        0.278786        0.000045
+    2     0.832976        0.174248        0.000046
+    3     0.700838        0.196059        0.000044
+    4     0.814616        0.268586        0.000044
+    5     0.691467        0.330452        0.000044
+    6     0.783659        0.194654        0.000046
+    7     0.802240        0.146926        0.000047
+    8     0.834025        0.244478        0.000046
+    9     0.772049        0.241288        0.000045
+    10    0.473087        0.139420        0.000046
+    11    0.849796        0.283829        0.000045
+    12    0.866909        0.147805        0.000046
+    13    1.008157        0.181169        0.000045
+    14    0.534548        0.148885        0.000045
+    15    0.577289        0.145060        0.000046
+    16    0.592843        0.178472        0.000045
+    17    0.868248        0.243828        0.000045
+    18    0.643367        0.188713        0.000046
+    19    0.610603        0.143450        0.000045
+    20    0.561710        0.255773        0.000045
   #+END_EXAMPLE
   :END:
+  
+* Prior predictive check
 
-  The dispersion effect is close to zero, which suggests that the problem is
-  with the estimation of \(u_i^\phi\):
+  Check whether the prior is sensible by generating new data from the prior.
 
-  #+BEGIN_SRC ipython
-    ed.get_session().run(tf.exp(q_disp_bias.mean()), {onehot: data['onehot'][nonzero_cpm], genotypes: data['genotypes'], cell_bias: data['normalizers'][nonzero_cpm]})
+  #+BEGIN_SRC ipython :ipyfile figure/hurdle.org/prior-pred.png
+    prior_pred = ed.get_session().run(
+      ed.copy(log_cpm, {}),
+      {
+        onehot: data['onehot'][nonzero_cpm],
+        genotypes: data['genotypes'][:,0:1],
+        cell_bias: data['normalizers'][nonzero_cpm],
+        log_cpm: data['log_cpm'][nonzero_cpm],
+      })
+
+    plt.clf()
+    plt.gcf().set_size_inches(8, 6)
+    plt.scatter(x=np.where(data['onehot'][nonzero_cpm] == 1)[1] + np.random.normal(scale=0.1, size=q), y=prior_pred, s=2)
+    plt.errorbar(x=np.arange(n), y=onehot_cpm.mean(axis=0), yerr=2 * onehot_cpm.std(axis=0), fmt='o', c='red')
+    plt.xlabel('Individual')
+    plt.ylabel('$\log_2(CPM + 1)$')
+    plt.gca().set_xticks([])
+    plt.gcf()
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  #+BEGIN_EXAMPLE
-  array([[ 1.11637723],
-           [ 0.64719135],
-           [ 0.97023523],
-           [ 0.71875077],
-           [ 0.6826247 ],
-           [ 0.6159026 ],
-           [ 1.18252456],
-           [ 1.10012722],
-           [ 1.00644839],
-           [ 0.88528788],
-           [ 0.82224023],
-           [ 0.66529012],
-           [ 0.95322323],
-           [ 1.11009932],
-           [ 0.91550487],
-           [ 1.11324096],
-           [ 0.86389071],
-           [ 0.82898474],
-           [ 0.82220507],
-           [ 0.78523099],
-           [ 0.63520527]], dtype=float32)
-  #+END_EXAMPLE
+  [[file:figure/hurdle.org/prior-pred.png]]
   :END:
-  
+
 * Multivariate test case
 
   #+CALL: load-test-case()
@@ -593,8 +598,8 @@
   :RESULTS:
   :END:
 
-  #+BEGIN_SRC ipython
-    inf.run(n_samples=10, n_iter=2000, optimizer=tf.train.AdamOptimizer(learning_rate=1e-2))
+  #+BEGIN_SRC ipython :results output
+    inf.run(n_samples=10, n_iter=5000, n_print=5000, optimizer=tf.train.AdamOptimizer(learning_rate=1e-2))
   #+END_SRC
 
   #+RESULTS:
@@ -715,4 +720,3 @@
      We previously developed multiresponse QTL models which learned the target
      genes of causal variants, allowing the true target gene to explain away
      nearby correlated genes ([[https://www.biorxiv.org/content/early/2017/11/14/219428][Park et al 2017]]).
-
