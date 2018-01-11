@@ -3,43 +3,30 @@
 
 * Introduction
 
-  Here, we estimate means, variances, and dropout rates of the single cell data
-  using a hierarchical zero-inflated negative binomial (ZINB) model.
+  The simplest approach to call mean/variance QTLs is to estimate a mean and a
+  dispersion for each individual, treat them as continuous phenotypes, and plug
+  into standard QTL mapping software.
 
-  The key issues are:
-
-  1. *This model does not use genotype information.* The basic idea is that
-     after fitting the model, we will recover an individual-by-gene mean matrix
-     and individual-by-gene dispersion matrix. We can use the columns of this
-     matrix as continuous phenotypes to plug into existing QTL mapping
-     software.
-
-     Related, this model does not use covariates (either measured or inferred)
-     to estimate any of the parameters.
+  Here, we find maximum likelihood estimates of a zero-inflated negative
+  binomial model for the dropout, mean, and dispersion per individual per gene.
 
 * Setup                                                            :noexport:
 
   #+BEGIN_SRC emacs-lisp
-    (org-babel-lob-ingest "/home/aksarkar/projects/singlecell-qtl/analysis/sc-vs-bulk.org")
-    (org-babel-lob-ingest "/home/aksarkar/projects/singlecell-qtl/analysis/qtl-mapping.org")
     (org-babel-lob-ingest "/home/aksarkar/.emacs.d/org-templates/library.org")
   #+END_SRC
 
   #+RESULTS:
   : 1
 
-  This has to be run on the ~gpu2~ partition since it depends on ~libcuda.so~
-
-  #+CALL: ipython3(venv="scqtl", memory="32G", partition="gpu2")
+  #+CALL: ipython3(venv="scqtl", memory="16G")
 
   #+RESULTS:
-  : Submitted batch job 40967674
+  : Submitted batch job 41998691
 
   #+BEGIN_SRC ipython
     %matplotlib inline
 
-    import edward as ed
-    import functools
     import numpy as np
     import pandas as pd
     import tensorflow as tf
@@ -50,163 +37,384 @@
   :RESULTS:
   :END:
 
-* Read the data                                                    :noexport:
+* Read the data
 
-  #+CALL: load-data-defs()
+  #+BEGIN_SRC ipython
+    umi = pd.read_table('/scratch/midway2/aksarkar/singlecell/umi-qc.txt.gz', sep=' ', index_col=0)
+    onehot = pd.read_table('/scratch/midway2/aksarkar/singlecell/onehot-qc.txt.gz', sep=' ', index_col=0)
+  #+END_SRC
 
   #+RESULTS:
   :RESULTS:
   :END:
 
-  #+CALL: load-data()
+* Maximum likelihood estimation
 
-  #+RESULTS:
-  :RESULTS:
-  : ((20327, 2261), (34608, 15))
-  :END:
+  Use gradient descent to maximize the likelihood of the zero-inflated negative
+  binomial model for the data.
 
-  #+CALL: umi-qc()
+  #+BEGIN_SRC ipython
+    def log_zinb_positive(x, mu, theta, pi, eps=1e-8):
+      """Log likelihood of x according to ZINB model
 
-  #+RESULTS:
-  :RESULTS:
-  : (15636, 1861)
-  :END:
+      Lopez et al. "A deep generative model for gene expression profiles
+      from single-cell RNA sequencing"
 
-* Model specification and inference
+      c.f. Hilbe 2012, eq. 11.12, 11.13
 
-  We implement ZINB in [[http://edwardlib.org/][Edward]] (not shown). This allows us to succinctly
-  describe the model below:
-
-  #+NAME: zinb-def
-  #+BEGIN_SRC ipython :exports none
-    def logit(x):
-      return tf.reciprocal(1 + tf.exp(-x))
-
-    class _ZINB(ds.Distribution):
-      """Zero-inflated negative binomial random variable
+      mu: mean (>0)
+      theta: inverse dispersion parameter (>0)
+      pi:logit of the dropout parameter
 
       """
-      def __init__(self, dropout, mean, dispersion, validate_args=False,
-                   allow_nan_stats=False, name='ZINB'):
-        parameters = locals()
-        with tf.name_scope(name, values=[dropout, mean, dispersion]):
-          self._dropout = tf.identity(dropout, name="dropout")
-          self._mean = tf.exp(tf.identity(mean, name="mean"))
-          self._dispersion = tf.exp(tf.identity(dispersion, name="dispersion"))
-        super(_ZINB, self).__init__(
-            allow_nan_stats=allow_nan_stats,
-            dtype=self._mean.dtype,
-            graph_parents=[self._dropout, self._mean, self._dispersion],
-            name=name,
-            parameters=parameters,
-            reparameterization_type=ds.FULLY_REPARAMETERIZED,
-            validate_args=validate_args,
-        )
+      case_zero = tf.nn.softplus(- pi + theta * tf.log(theta + eps) - theta * tf.log(theta + mu + eps)) \
+                  - tf.nn.softplus( - pi)
+      case_non_zero = - pi - tf.nn.softplus(- pi) \
+                      + theta * tf.log(theta + eps) - theta * tf.log(theta + mu + eps) \
+                      + x * tf.log(mu + eps) - x * tf.log(theta + mu + eps) \
+                      + tf.lgamma(x + theta) - tf.lgamma(theta) - tf.lgamma(x + 1)
+      mask = tf.cast(tf.less(x, eps), tf.float32)
+      res = tf.multiply(mask, case_zero) + tf.multiply(1 - mask, case_non_zero)
+      return tf.reduce_sum(res)
 
-      def nb_llik(self, x):
-        """Return log likelihood of x under NB model
+    def _optimize(umi, onehot, learning_rate=1e-2, max_iters=1000):
+      n, p = umi.shape
+      _, m = onehot.shape
+      dropout = tf.Variable(tf.zeros([m, p]))
+      mean = tf.exp(tf.Variable(tf.zeros([m, p])))
+      dispersion = tf.exp(tf.Variable(tf.zeros([m, p])))
+      llik = log_zinb_positive(
+        umi,
+        tf.matmul(onehot, mean),
+        tf.matmul(onehot, dispersion),
+        tf.matmul(onehot, dropout))
 
-        c.f. Hilbe 2012, Eq. 8.10
-
-        """
-        theta = tf.reciprocal(self._dispersion)
-        return (tf.lgamma(x + theta) -
-                tf.lgamma(x + 1) -
-                tf.lgamma(theta) +
-                theta * (tf.log(theta) - tf.log(theta + self._mean)) +
-                x * (tf.log(self._mean) - tf.log(theta + self._mean)))
-
-      def _log_prob(self, x):
-        """Return log likelihood of x under ZINB model
-
-        x ~ dropout \delta_0(x) + (1 - dropout) NB(x; mean, dispersion)
-
-        c.f. Hilbe 2012, Eqs. 11.12, 11.13
-
-        """
-        zeros = tf.cast(tf.equal(x, 0.), tf.float32)
-        case_zero = (tf.nn.softplus(-logit(self._dropout) + self.nb_llik(x)) -
-                     tf.nn.softplus(-logit(self._dropout)))
-        case_nonzero = (tf.log(self._dropout) + self.nb_llik(x))
-        return zeros * case_zero + (1 - zeros) * case_nonzero
-
-      def _sample_n(self, n):
-        raise NotImplementedError
-
-    class ZINB(ed.models.RandomVariable, _ZINB):
-      def __init__(self, *args, **kwargs):
-        if 'mean' in kwargs:
-            mean = kwargs['mean']
-        else:
-            mean = args[1]
-        if 'value' not in kwargs:
-            kwargs['value'] = tf.zeros_like(mean)
-        ed.models.RandomVariable.__init__(self, *args, **kwargs)
+      opt = [llik, tf.log(mean), tf.log(dispersion)]
+      train = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(-llik)
+      curr = float('-inf')
+      with tf.Session() as sess:
+        sess.run(tf.global_variables_initializer())
+        for i in range(max_iters):
+          _, update = sess.run([train, llik])
+          if not np.isfinite(update):
+            raise tf.train.NanLossDuringTrainingError
+          if np.isclose(update, curr):
+            return sess.run(opt)
+          if not i % 100:
+            print(i, update)
+        return sess.run(opt)
   #+END_SRC
 
-  #+RESULTS: zinb-def
+  #+RESULTS:
+  :RESULTS:
+  :END:
+
+  Verify we can estimate parameters for multiple genes simultaneously, assuming
+  no sharing between genes:
+
+  #+BEGIN_SRC ipython
+    llik0, mean0, dispersion0 = optimize(
+      umi.iloc[:1].values.T.astype(np.float32),
+      onehot.astype(np.float32),
+      max_iters=2000)
+    llik1, mean1, dispersion1 = optimize(
+      umi.values[:2].T.astype(np.float32),
+      onehot.astype(np.float32),
+      max_iters=2000)
+    np.isclose(mean0.T, mean1[:,0]).all()
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  : True
+  :END:
+
+  Estimate parameters for batches of genes.
+
+  #+BEGIN_SRC ipython
+    def generate_batch_params(umi, onehot):
+      for k, g in umi.groupby(np.arange(umi.shape[0]) // 100):
+        _, m, d = optimize(
+          g.values.T.astype(np.float32),
+          onehot.astype(np.float32),
+          max_iters=2000)
+        yield pd.DataFrame(
+          np.stack([m, d]).reshape(2 * onehot.shape[1], -1, order='F').T,
+          columns=pd.MultiIndex.from_product([onehot.columns, ['mean', 'dispersion']]),
+          index=g.index)
+  #+END_SRC
+
+  #+RESULTS:
   :RESULTS:
   :END:
 
   #+BEGIN_SRC ipython
-    Normal = ed.models.Normal
-    p, n = umi_qc.shape
-    _, m = onehot.shape
-
-    shared_dropout = Normal(tf.zeros([1]), scale=tf.ones([1]))
-    shared_mean = Normal(tf.zeros([1]), scale=tf.ones([1]))
-    shared_dispersion = Normal(tf.zeros([1]), scale=tf.ones([1]))
-
-    gene_dropout = Normal(tf.ones([1, p]) * shared_dropout, scale=tf.ones([1, p]))
-    gene_mean = Normal(tf.ones([1, p]) * shared_mean, scale=tf.ones([1, p]))
-    gene_dispersion = Normal(tf.ones([1, p]) * shared_dispersion, scale=tf.ones([1, p]))
-
-    dropout = Normal(loc=tf.ones([n, 1]) * gene_dropout, scale=tf.constant(1.))
-    mean = Normal(loc=tf.ones([m, 1]) * gene_mean, scale=tf.constant(1.))
-    dispersion = Normal(loc=tf.ones([m, 1]) * gene_dispersion, scale=tf.constant(1.))
-
-    y = ZINB(dropout=dropout,
-             mean=tf.exp(tf.matmul(onehot, mean)),
-             dispersion=tf.exp(tf.matmul(onehot, dispersion)))
+    next(generate_batch_params(umi, onehot))
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  :END:
+  #+BEGIN_EXAMPLE
+                    NA18489              NA18498              NA18499  \
+                         mean dispersion      mean dispersion      mean   
+    gene                                                                  
+    ENSG00000000003  2.129896   1.040384  1.831435   1.203651  1.975581   
+    ENSG00000000005 -1.012416   3.233550 -1.197320   4.527993 -1.443664   
+    ENSG00000000419  1.409282   1.868944  1.291523   1.902158  1.660635   
+    ENSG00000000457 -1.027902  -0.762453 -2.471269   2.334285 -0.823223   
+    ENSG00000000460  0.381196   1.006142 -0.143898   3.528076  0.473302   
+    ENSG00000000938 -2.571584   0.063600 -2.471271   2.334318 -3.069996   
+    ENSG00000000971 -2.483653   1.639750 -2.471268   2.334308 -2.458566   
+    ENSG00000001036  0.335987   0.852472  0.448540   1.146133  0.597490   
+    ENSG00000001084  0.252342   2.602324  0.714029   4.263682  0.550448   
+    ENSG00000001167  0.055773   3.306679  0.450563   0.856471  0.597633   
+    ENSG00000001460 -0.066040   1.233336 -0.165721   0.483854  0.248271   
+    ENSG00000001461 -0.851497   3.068040 -1.197321   4.528950 -0.542922   
+    ENSG00000001497  0.808486   1.143792  1.034987   4.923717  1.141987   
+    ENSG00000001561 -0.937030   3.584049 -2.196694   3.624702 -1.183835   
+    ENSG00000001617 -0.775555   2.380886 -0.474438   2.638649 -0.084855   
+    ENSG00000001626 -2.483653   1.639757 -3.069995  -3.069995 -1.630387   
+    ENSG00000001629  0.655585   0.628168  0.866785   0.388664  0.826927   
+    ENSG00000001630  0.925151   3.399090  0.348507   1.279117  0.929385   
+    ENSG00000001631  0.561919   2.659104  0.706800   0.283879  0.991596   
+    ENSG00000002016 -1.342230   3.081311 -3.069995  -3.069995 -1.032405   
+    ENSG00000002330  0.212115   2.762939  0.333505   2.583766  0.446676   
+    ENSG00000002549  1.160673   1.130266  1.379484   2.214617  1.241918   
+    ENSG00000002586  0.834978   1.120379  1.244951   2.203687  0.640170   
+    ENSG00000002587 -2.361182   3.065184 -2.471268   2.334308 -0.966235   
+    ENSG00000002726 -2.571585   0.063599 -3.069995  -3.069995 -2.483373   
+    ENSG00000002745 -3.069996  -3.069996 -3.069995  -3.069995 -2.492023   
+    ENSG00000002746 -1.744860   2.963165 -2.471271   2.334368 -1.455945   
+    ENSG00000002822 -0.593324   0.440962 -0.000878   0.910209 -0.133999   
+    ENSG00000002834  0.981618   1.340268  1.155202   1.586879  1.404317   
+    ENSG00000002919 -0.495898   0.356116 -0.899572   4.069409 -0.009951   
+    ...                   ...        ...       ...        ...       ...   
+    ENSG00000004975  0.063593   1.202622  0.364965   3.953081  0.263206   
+    ENSG00000005001 -1.437248  -1.155965 -3.069995  -3.069995 -2.492023   
+    ENSG00000005007  0.306046   2.883852 -0.032161   1.212098  0.294945   
+    ENSG00000005020  0.398231   1.519708 -2.196691   3.624348 -1.023901   
+    ENSG00000005022  3.785442   0.698266  3.710307   1.008322  3.771501   
+    ENSG00000005059 -0.670812   1.320874  0.270904   4.725834 -0.720718   
+    ENSG00000005073 -2.571584   0.063599 -2.471269   2.334285 -3.069996   
+    ENSG00000005075  1.953404   1.027987  2.116252   0.519185  2.254911   
+    ENSG00000005100  0.905286   1.728512  1.175212   1.008029  1.256453   
+    ENSG00000005102 -2.571584   0.063600 -2.471268   2.334308 -1.933522   
+    ENSG00000005108  0.308900   2.673934  0.350861   0.605251  0.220038   
+    ENSG00000005156  0.823647   1.013438  0.882694   0.823331  0.923966   
+    ENSG00000005175  1.067274   1.177626  0.882290   0.313713  1.494151   
+    ENSG00000005187 -0.845506   2.479191 -2.196692   3.624459 -1.281758   
+    ENSG00000005189 -1.163219   2.970259 -1.600157   4.468892 -1.617373   
+    ENSG00000005194  1.873310   1.019860  1.360976   1.440315  1.850174   
+    ENSG00000005238 -1.025308   1.059032 -2.196690   3.624091 -0.816312   
+    ENSG00000005243 -3.069996  -3.069996 -3.069995  -3.069995 -2.666517   
+    ENSG00000005249  0.479572   3.104089  0.184562   2.914573  0.275046   
+    ENSG00000005302  0.067588   0.527751 -0.681246   4.384820 -0.041064   
+    ENSG00000005339  0.564913   3.516059  0.778337   1.353184  0.942006   
+    ENSG00000005379 -2.219040   3.559836 -2.196689   3.625199 -1.128321   
+    ENSG00000005421 -2.571584   0.063599 -3.069995  -3.069995 -1.667236   
+    ENSG00000005436 -0.655987   3.966089 -0.035735   0.951549 -0.325874   
+    ENSG00000005448  0.265978   0.671158  0.918240   0.168896  0.880642   
+    ENSG00000005469 -0.893735  -0.881648 -0.527846   1.459667 -0.813460   
+    ENSG00000005471 -2.571584   0.063600 -2.471272   2.334339 -1.230347   
+    ENSG00000005483  1.003331   2.268687  1.105221   0.068866  1.226103   
+    ENSG00000005486  0.207880   0.959473  0.240228   0.078456  0.572517   
+    ENSG00000005513 -1.663067   3.977648 -1.013031   3.194155 -1.042155   
 
-  We fit the model using variational inference.
+                                 NA18501              NA18502             \
+                    dispersion      mean dispersion      mean dispersion   
+    gene                                                                   
+    ENSG00000000003   1.275248  2.197145   1.148987  1.991772   1.525933   
+    ENSG00000000005   2.494340 -1.189205   3.186354 -1.173890   1.952006   
+    ENSG00000000419   1.412547  1.613385   0.982590  1.651414   1.552507   
+    ENSG00000000457   0.033299 -0.992951  -0.218257 -0.919398  -0.505465   
+    ENSG00000000460   1.121835  0.497061   1.147735  0.421020   0.654771   
+    ENSG00000000938  -3.069996 -2.577418   0.020611 -2.519916   0.530621   
+    ENSG00000000971   2.489353 -2.375096   3.004687 -1.784525   0.792643   
+    ENSG00000001036   1.873279  0.630682   2.182804  0.921291   1.303220   
+    ENSG00000001084   0.720871  0.595737   1.723960  0.552306   0.858400   
+    ENSG00000001167   3.074540  0.389030   0.870552  0.515714   1.153510   
+    ENSG00000001460   0.860469  0.224811   0.660895 -0.364556   0.288690   
+    ENSG00000001461   0.328633 -0.193987   2.023189 -0.373825   1.533723   
+    ENSG00000001497   1.053647  1.110098   1.252279  1.158260   3.078911   
+    ENSG00000001561   3.380932 -1.473532  -0.771231 -1.428107   0.038526   
+    ENSG00000001617   2.610636 -0.757686   0.457521 -1.009767   0.734833   
+    ENSG00000001626   0.928774 -2.483459   1.591605 -2.493345   0.940475   
+    ENSG00000001629   1.194005  0.667738   0.648689  0.967636   1.115215   
+    ENSG00000001630   1.678530  0.799216   0.906653  0.487695   0.378718   
+    ENSG00000001631   1.161289  0.695147   0.812966  0.738983   0.788981   
+    ENSG00000002016  -0.734127 -0.466087   4.426012 -0.969455   1.206027   
+    ENSG00000002330   1.307849  0.463852   2.082505 -0.043158   0.388542   
+    ENSG00000002549   1.728189  1.417150   1.255493  1.196282   0.822949   
+    ENSG00000002586   1.390685  0.721728   0.785776  0.657847   0.701870   
+    ENSG00000002587   0.342099 -1.347101   0.822175 -2.228002   3.533023   
+    ENSG00000002726   1.394151 -2.577418   0.020611 -1.502557  -2.213626   
+    ENSG00000002745   0.972282 -2.577418   0.020610 -2.484165   1.772275   
+    ENSG00000002746  -0.599573 -2.375096   3.004729 -1.441337  -0.106554   
+    ENSG00000002822  -0.014131 -0.042761   1.156875 -0.084785   0.369554   
+    ENSG00000002834   1.022764  1.326707   1.477121  1.488406   1.807480   
+    ENSG00000002919   2.217708  0.073540   4.101765 -0.171291   0.500094   
+    ...                    ...       ...        ...       ...        ...   
+    ENSG00000004975   0.380555  0.425287   1.012901  0.456856   0.704877   
+    ENSG00000005001   0.972284 -3.069995  -3.069996 -1.361509  -1.131030   
+    ENSG00000005007   1.278010  0.499191   1.752338  0.416601   0.903077   
+    ENSG00000005020   1.836571 -1.161080   0.327177 -1.314270  -0.670863   
+    ENSG00000005022   0.791077  3.772086   0.382604  3.834245  -0.485711   
+    ENSG00000005059   3.403225 -0.405905  -0.038159 -0.448956   0.804431   
+    ENSG00000005073  -3.069996 -2.491249   0.992240 -2.493345   0.940474   
+    ENSG00000005075   0.664321  2.254082   0.827994  2.332858   1.019780   
+    ENSG00000005100   0.703447  1.166172   1.411780  1.275589   1.597392   
+    ENSG00000005102   2.963255 -0.796089  -0.525920 -2.479445   2.169137   
+    ENSG00000005108   3.851886  0.831410   2.359488  0.675382   1.144344   
+    ENSG00000005156   1.263375  0.756509   1.186260  0.860087   1.431192   
+    ENSG00000005175   1.629606  1.156828   1.211125  1.347654   1.245455   
+    ENSG00000005187   2.453501 -1.399773  -0.457801 -0.177967   4.097545   
+    ENSG00000005189   0.586340 -0.908758   0.727031 -1.925379   4.224336   
+    ENSG00000005194   1.196199  1.931411   1.494063  1.735392   0.906179   
+    ENSG00000005238   0.020455 -1.096581   0.949648 -0.922698   2.048166   
+    ENSG00000005243  -0.529800 -2.577418   0.020611 -2.493345   0.940475   
+    ENSG00000005249   0.836098  0.424433   0.716048  0.456970   1.367340   
+    ENSG00000005302   1.145472  0.129500   0.754963  0.658799   0.848769   
+    ENSG00000005339   1.281296  0.960500   1.423272  0.845873   0.848145   
+    ENSG00000005379   0.651796 -2.310238   3.262814 -0.793812   3.519583   
+    ENSG00000005421   1.279058 -1.677280  -1.272578 -2.483294   1.537527   
+    ENSG00000005436   0.564020 -0.494503   0.056843 -0.394309   0.859408   
+    ENSG00000005448   0.830291  0.987048   0.962238  0.862888   1.655251   
+    ENSG00000005469   0.482216 -1.449687   0.638831 -0.465376   1.871915   
+    ENSG00000005471   1.761508 -1.546183  -0.641540 -1.627735   2.315701   
+    ENSG00000005483   1.468837  1.201934   1.491758  1.149127   1.137082   
+    ENSG00000005486   2.226534  0.789059   0.715484  0.401747   1.195547   
+    ENSG00000005513   3.484445 -0.568758   1.425562 -1.616506  -0.247063   
 
-  #+BEGIN_SRC ipython
-    q_shared_dropout = Normal(tf.Variable(tf.zeros([1, p])), tf.Variable(tf.zeros([1])))
-    q_shared_mean = Normal(tf.Variable(tf.zeros([1, p])), tf.Variable(tf.zeros([1])))
-    q_shared_dispersion = Normal(tf.Variable(tf.zeros([1, p])), tf.Variable(tf.zeros([1])))
+                       ...       NA19193              NA19203             \
+                       ...          mean dispersion      mean dispersion   
+    gene               ...                                                 
+    ENSG00000000003    ...      2.006535   1.412558  1.552042   1.535617   
+    ENSG00000000005    ...     -2.343646   3.136835 -1.011143   3.271192   
+    ENSG00000000419    ...      1.951627   1.004789  1.146270   3.046333   
+    ENSG00000000457    ...     -0.447657   4.414967 -2.026223   4.041344   
+    ENSG00000000460    ...      0.526563   0.907405  0.109117   0.104143   
+    ENSG00000000938    ...     -3.069995  -3.069996 -3.069995  -3.069996   
+    ENSG00000000971    ...     -2.477119   2.227571 -3.069995  -3.069996   
+    ENSG00000001036    ...      0.274659   1.792516  0.657167   2.974761   
+    ENSG00000001084    ...      0.648610   0.090636  0.468142   1.190747   
+    ENSG00000001167    ...      0.361707   2.759456  0.131981   3.540730   
+    ENSG00000001460    ...     -0.324876   3.588552 -0.504079   0.920495   
+    ENSG00000001461    ...     -0.958257   3.362137  0.510064   0.356532   
+    ENSG00000001497    ...      1.277807   1.022352  0.768883   1.607067   
+    ENSG00000001561    ...     -0.840268   1.387601 -1.771933   4.448713   
+    ENSG00000001617    ...     -0.746184   0.964354 -1.385511   4.588686   
+    ENSG00000001626    ...     -3.069995  -3.069996 -3.069995  -3.069996   
+    ENSG00000001629    ...      0.735205   0.932397  0.500935   1.705664   
+    ENSG00000001630    ...      1.372628   0.458993 -0.008261   2.976739   
+    ENSG00000001631    ...      1.105365   0.646889  0.127345   4.607383   
+    ENSG00000002016    ...     -1.608859   3.621106 -0.783830   3.971882   
+    ENSG00000002330    ...      0.431764   4.045488 -0.327173   4.291642   
+    ENSG00000002549    ...      1.458457   0.773636  0.732125   3.104270   
+    ENSG00000002586    ...      0.622043   3.400157 -0.189362   3.787081   
+    ENSG00000002587    ...     -1.285244  -0.210648 -2.482802   2.037351   
+    ENSG00000002726    ...     -2.515676   0.581051 -3.069995  -3.069996   
+    ENSG00000002745    ...     -3.069995  -3.069996 -3.069995  -3.069996   
+    ENSG00000002746    ...     -0.943246   3.341031 -2.482800   2.037340   
+    ENSG00000002822    ...     -0.278931   1.923432 -0.066156   1.188443   
+    ENSG00000002834    ...      1.346419   1.087366  1.106891   4.869573   
+    ENSG00000002919    ...      0.049361   2.979292 -1.090531   4.523461   
+    ...                ...           ...        ...       ...        ...   
+    ENSG00000004975    ...      0.294159   0.873128  0.241179   2.909408   
+    ENSG00000005001    ...     -2.483459   1.591594 -3.069995  -3.069996   
+    ENSG00000005007    ...      0.392142   0.362849 -0.062039   0.605395   
+    ENSG00000005020    ...     -1.306709  -1.022818 -2.310237   3.262915   
+    ENSG00000005022    ...      3.871394   0.107708  3.653321   1.094304   
+    ENSG00000005059    ...     -0.317940   2.198897 -1.097861  -0.145781   
+    ENSG00000005073    ...     -3.069995  -3.069996 -2.482800   2.037337   
+    ENSG00000005075    ...      1.756793   0.632337  1.632815   0.954237   
+    ENSG00000005100    ...      1.287774   1.067348  0.956882   1.690382   
+    ENSG00000005102    ...     -1.270907  -1.883521 -2.482800   2.037343   
+    ENSG00000005108    ...     -0.659857  -0.626123  1.049505   1.296376   
+    ENSG00000005156    ...      0.977228   0.894656  0.750985   0.324911   
+    ENSG00000005175    ...      1.419324   1.104697  0.766044   2.063688   
+    ENSG00000005187    ...     -1.097680   3.417253 -0.783831   3.971631   
+    ENSG00000005189    ...     -1.096278   2.187982 -1.561024   4.463959   
+    ENSG00000005194    ...      2.113914   1.111668  1.148113   0.476975   
+    ENSG00000005238    ...     -0.963677   3.991815 -2.310238   3.262727   
+    ENSG00000005243    ...     -2.483459   1.591599 -3.069995  -3.069996   
+    ENSG00000005249    ...      0.866722   1.133521  0.357808   1.850745   
+    ENSG00000005302    ...      0.064877   2.196342  0.053563   0.569776   
+    ENSG00000005339    ...      0.944799   1.782315  0.810322   0.650908   
+    ENSG00000005379    ...     -2.483460   1.591599 -2.026223   4.041856   
+    ENSG00000005421    ...     -2.483459   1.591594 -2.026224   4.042863   
+    ENSG00000005436    ...     -0.333181  -0.064515 -0.155208   0.394982   
+    ENSG00000005448    ...      0.848659   3.219906 -0.097720   4.031782   
+    ENSG00000005469    ...     -0.433273   0.756738 -1.385483   4.588221   
+    ENSG00000005471    ...     -2.429165   2.720235 -3.069995  -3.069996   
+    ENSG00000005483    ...      1.228193   0.939192  0.699109   4.365779   
+    ENSG00000005486    ...      0.596489   1.282025  0.096323   0.757906   
+    ENSG00000005513    ...     -1.308837   3.377794 -2.482799   2.037375   
 
-    q_dropout = Normal(tf.Variable(tf.zeros([n, p])), tf.Variable(tf.zeros([n, p])))
-    q_mean = Normal(tf.Variable(tf.zeros([m, p])), tf.Variable(tf.zeros([m, p])))
-    q_dispersion = Normal(tf.Variable(tf.zeros([m, p])), tf.Variable(tf.zeros([m, p])))
-  #+END_SRC
+                      NA19207              NA19210              NA19257             
+                         mean dispersion      mean dispersion      mean dispersion  
+    gene                                                                            
+    ENSG00000000003  2.270149   1.291769  2.272561   1.489807  2.067719   1.317293  
+    ENSG00000000005 -1.067290   3.451561 -0.002937   4.940342 -2.429164   2.720240  
+    ENSG00000000419  1.863585   1.476035  2.116735   1.723739  2.017102   1.187945  
+    ENSG00000000457 -1.007413  -0.160704 -0.687131   0.766807 -0.876137  -0.239736  
+    ENSG00000000460  0.987743   3.335392  0.906760   1.880341  0.755839   1.270638  
+    ENSG00000000938 -1.445426  -1.168206 -3.069995  -3.069997 -3.069994  -3.069997  
+    ENSG00000000971 -3.069996  -3.069995 -2.389260   2.939303 -2.429166   2.720350  
+    ENSG00000001036  0.178490   1.670176  0.548335   1.740243  0.751346   1.656603  
+    ENSG00000001084  0.747908   1.821240  0.753520   1.293691  0.558833   1.095079  
+    ENSG00000001167  0.350995   0.735839  0.549128   1.276414  0.379721   1.385557  
+    ENSG00000001460 -0.092893   0.432679 -0.126155   3.337254 -0.335203  -0.321453  
+    ENSG00000001461 -0.226872   2.389895 -0.580693   2.606048 -0.156277   1.039680  
+    ENSG00000001497  0.985228   1.012220  1.551090   0.614642  1.268425   0.921802  
+    ENSG00000001561 -0.346924   4.166252 -1.924498   4.226661 -1.464096   3.175051  
+    ENSG00000001617 -0.029002   2.681076  0.278531  -0.008802 -0.537106  -0.065350  
+    ENSG00000001626 -2.490140   1.022757 -2.483251   1.435571 -2.483460   1.591600  
+    ENSG00000001629  0.880076   1.413420  1.153883   1.966475  1.051383   1.272641  
+    ENSG00000001630  1.301816   0.996368  1.058972   0.635960  0.961640   1.061444  
+    ENSG00000001631  1.008254   0.931938  1.145833   1.118083  0.972696   0.954945  
+    ENSG00000002016 -1.260441   0.401151 -0.953856  -0.147992 -0.960831   3.506643  
+    ENSG00000002330 -0.071232   1.467275  0.639673   0.823360  0.178522   0.911409  
+    ENSG00000002549  1.342708   1.119564  1.679903   1.129952  1.457665   0.887837  
+    ENSG00000002586  0.229915   2.000210  0.809321   1.463395  0.744754   1.059465  
+    ENSG00000002587 -2.298529   3.304173 -0.907979   3.403303 -0.539636  -0.402691  
+    ENSG00000002726 -2.573533   0.049099 -2.453534   2.537244 -2.491248   0.992239  
+    ENSG00000002745 -1.553869  -2.249430 -3.069995  -3.069997 -2.491248   0.992241  
+    ENSG00000002746 -1.197345   3.004240 -2.302504   3.290665 -0.828013   0.205573  
+    ENSG00000002822 -0.064959   0.679072  0.490668   3.134007 -0.176609   2.825423  
+    ENSG00000002834  1.415569   1.521682  1.582990   1.755542  1.598514   1.227025  
+    ENSG00000002919  0.077214   1.062634  0.195074   0.372060  0.170917   1.601927  
+    ...                   ...        ...       ...        ...       ...        ...  
+    ENSG00000004975  0.114585   3.738524  0.666603   3.040079  0.426688   0.880965  
+    ENSG00000005001 -2.490139   1.022760 -2.453534   2.537244 -3.069994  -3.069997  
+    ENSG00000005007  0.480640   1.202985  0.721744   0.143708  0.633570   0.662897  
+    ENSG00000005020 -0.647326   1.377587 -0.847886   0.158151 -0.642299   2.276065  
+    ENSG00000005022  3.874942   0.254107  3.893274  -0.012717  3.830929   0.428667  
+    ENSG00000005059 -0.638129   0.674256 -0.022575   1.910352 -0.107026   0.550903  
+    ENSG00000005073 -2.573534   0.049098 -2.528654   0.435346 -1.461320  -1.191865  
+    ENSG00000005075  2.163290   1.296291  2.368099   0.581447  2.292018   0.615094  
+    ENSG00000005100  1.240726   1.111812  1.326639   1.436587  1.478702   1.187593  
+    ENSG00000005102 -2.463315   2.438567 -2.389257   2.939047 -2.310236   3.262912  
+    ENSG00000005108  0.422034   3.472263 -0.340692   0.158916  0.201973  -0.360826  
+    ENSG00000005156  1.016029   1.247394  1.150959   2.643716  0.917572   1.587512  
+    ENSG00000005175  1.477165   1.003464  1.572083   0.848442  1.470976   1.493741  
+    ENSG00000005187 -1.492519   3.305247 -0.392610   2.694325 -1.343323   3.055620  
+    ENSG00000005189 -0.569808   4.488647 -2.206458   3.596557 -0.260813   1.698942  
+    ENSG00000005194  2.078969   1.240380  2.190809   1.182704  1.895152   1.346708  
+    ENSG00000005238 -0.860315   3.017208 -0.788111   3.525056 -1.155797  -0.435120  
+    ENSG00000005243 -2.483585   1.623499 -3.069995  -3.069997 -2.577418   0.020611  
+    ENSG00000005249  0.481028   3.238620  0.781998   1.587202  0.724996   1.109465  
+    ENSG00000005302 -0.135955   0.534452  0.092239   0.118966 -0.048423   1.028106  
+    ENSG00000005339  0.907097   2.115887  1.327095   1.554416  1.155256   1.203389  
+    ENSG00000005379 -0.749658   2.167645 -1.185377   3.286756 -1.343330   3.055406  
+    ENSG00000005421 -0.937275   3.574766 -1.124767  -1.609913 -2.483460   1.591597  
+    ENSG00000005436 -0.308403   0.552655 -0.327701   0.797337  0.173860   3.582818  
+    ENSG00000005448  1.026991   1.473361  1.060236   2.297423  1.033300   1.402104  
+    ENSG00000005469 -1.190812   3.147292 -0.624657   0.749095 -1.464106   3.174516  
+    ENSG00000005471 -1.197941  -2.771424 -2.206455   3.596386 -0.759525   2.081764  
+    ENSG00000005483  1.272473   1.320457  1.501905   2.619870  1.410921   1.326477  
+    ENSG00000005486  0.765524   1.081962  0.825901   1.241375  0.827998   1.385794  
+    ENSG00000005513 -0.499003  -0.038786 -0.489348   0.939594 -0.095016  -0.691212  
 
-  #+RESULTS:
-  :RESULTS:
-  :END:
-
-  #+BEGIN_SRC ipython :async t
-    # IMPORTANT: we have to explicitly make sure Edward does not use analytical
-    # KL because it does not DTRT
-    inf = ed.ReparameterizationKLqp(
-      latent_vars={
-        shared_dropout: q_shared_dropout,
-        shared_mean: q_shared_mean,
-        shared_dispersion: q_shared_dispersion,
-        dropout: q_dropout,
-        mean: q_mean,
-        dispersion: q_dispersion,
-      },
-      data={y: umi_qc.values.T})
-    inf.run(n_samples=10)
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  486e4f90-66f8-4f28-94a5-eef5ca89d28e
+    [100 rows x 64 columns]
+  #+END_EXAMPLE
   :END:
