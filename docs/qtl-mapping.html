@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2017-12-22 Fri 15:33 -->
+<!-- 2018-01-13 Sat 18:43 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>QTL mapping pipeline</title>
@@ -236,9 +236,6 @@ for the JavaScript code in this tag.
 <div id="text-table-of-contents">
 <ul>
 <li><a href="#org5ed2a04">Introduction</a></li>
-<li><a href="#org149d7c1">Quality control on expression</a></li>
-<li><a href="#orgf315729">Mean-QTL calling</a></li>
-<li><a href="#orgc8a9fe1">Variance-QTL calling</a></li>
 <li><a href="#orga4d85dd">Next steps</a></li>
 </ul>
 </div>
@@ -267,225 +264,6 @@ simply include the observed mean in the variance QTL model (like <code>voom</cod
 pass, assume no parameters are shared.</li>
 </ol>
 </div>
-</div>
-
-<div id="outline-container-org149d7c1" class="outline-2">
-<h2 id="org149d7c1">Quality control on expression</h2>
-<div class="outline-text-2" id="text-org149d7c1">
-<p>
-Filter out cells on percent spike-in and gene detection rate, and filter out
-genes on individual detection rate.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython" id="orgebf8d50"><span class="org-variable-name">keep_cells</span> = functools.<span class="org-builtin">reduce</span>(
-  np.logical_and,
-  [
-    annotations[<span class="org-string">'reads_ercc'</span>] / annotations.<span class="org-builtin">filter</span>(like=<span class="org-string">'reads_'</span>, axis=1).agg(np.<span class="org-builtin">sum</span>, axis=1) &lt; 0.5,
-    annotations[<span class="org-string">'detect_hs'</span>] &gt; 4000,
-    annotations[<span class="org-string">'chip_id'</span>] != <span class="org-string">'NA19092'</span>,
-  ]).values
-<span class="org-variable-name">keep_genes</span> = functools.<span class="org-builtin">reduce</span>(
-  np.logical_and,
-  [
-    (umi.groupby(annotations[<span class="org-string">'chip_id'</span>].values, axis=1).agg(np.<span class="org-builtin">sum</span>) &gt; 0).<span class="org-builtin">apply</span>(<span class="org-keyword">lambda</span> x: x.mean() &gt; 0.5, axis=1)
-  ]).values
-<span class="org-variable-name">umi_qc</span> = umi.loc[keep_genes, keep_cells]
-<span class="org-variable-name">annotations_qc</span> = annotations.loc[keep_cells]
-umi_qc.mask(umi_qc == 0)
-umi_qc.shape
-</pre>
-</div>
-
-<pre class="example">
-(15636, 1810)
-
-</pre>
-
-<pre class="example">
-(15636, 1861)
-
-</pre>
-
-<div class="org-src-container">
-<pre class="src src-ipython" id="org938881f"><span class="org-variable-name">individuals</span> = <span class="org-builtin">sorted</span>(annotations_qc[<span class="org-string">'chip_id'</span>].unique())
-<span class="org-variable-name">onehot</span> = np.zeros((umi_qc.shape[1], <span class="org-builtin">len</span>(individuals)), dtype=np.float32)
-onehot[np.arange(onehot.shape[0]),annotations_qc[<span class="org-string">'chip_id'</span>].<span class="org-builtin">apply</span>(<span class="org-keyword">lambda</span> x: individuals.index(x))] = 1
-</pre>
-</div>
-
-<div class="org-src-container">
-<pre class="src src-ipython">umi_qc.to_csv(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/umi-qc.txt.gz'</span>, sep=<span class="org-string">' '</span>, compression=<span class="org-string">'gzip'</span>)
-</pre>
-</div>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span class="org-variable-name">onehot</span> = pd.DataFrame(onehot, columns=individuals, index=umi_qc.columns)
-onehot.to_csv(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/onehot-qc.txt.gz'</span>, sep=<span class="org-string">' '</span>, compression=<span class="org-string">'gzip'</span>)
-</pre>
-</div>
-</div>
-</div>
-
-<div id="outline-container-orgf315729" class="outline-2">
-<h2 id="orgf315729">Mean-QTL calling</h2>
-<div class="outline-text-2" id="text-orgf315729">
-<p>
-Write out the <a href="https://qtltools.github.io/qtltools/pages/input_files.html">phenotype file</a> for <code>QTLtools</code>.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython" id="org6e0104c"><span class="org-variable-name">gene_info</span> = (pd.read_table(<span class="org-string">'/home/aksarkar/projects/singlecell-qtl/data/scqtl-genes.txt.gz'</span>)
-             .set_index(<span class="org-string">'gene'</span>)
-             .query(<span class="org-string">'source == "H. sapiens"'</span>)
-             .query(<span class="org-string">'chr != "hsX"'</span>)
-             .query(<span class="org-string">'chr != "hsY"'</span>)
-             .query(<span class="org-string">'chr != "hsMT"'</span>))
-gene_info.head()
-</pre>
-</div>
-
-<pre class="example">
-                chr      start        end      name strand      source
-gene                                                                    
-ENSG00000000419  hs20   49551404   49575092      DPM1      -  H. sapiens
-ENSG00000000457   hs1  169818772  169863408     SCYL3      -  H. sapiens
-ENSG00000000460   hs1  169631245  169823221  C1orf112      +  H. sapiens
-ENSG00000000938   hs1   27938575   27961788       FGR      -  H. sapiens
-ENSG00000000971   hs1  196621008  196716634       CFH      +  H. sapiens
-</pre>
-
-<div class="org-src-container">
-<pre class="src src-ipython" id="org3c51e08"><span class="org-keyword">def</span> <span class="org-function-name">qtltools_format</span>(row):
-  <span class="org-variable-name">row</span>[<span class="org-string">'#Chr'</span>] = <span class="org-string">'chr{}'</span>.<span class="org-builtin">format</span>(row[<span class="org-string">'chr'</span>][2:])
-  <span class="org-variable-name">row</span>[<span class="org-string">'gid'</span>] = row.name
-  <span class="org-variable-name">row</span>[<span class="org-string">'pid'</span>] = row.name
-  <span class="org-keyword">return</span> row
-
-(gene_info
- .<span class="org-builtin">apply</span>(qtltools_format, axis=1)
- .merge(mean, left_index=<span class="org-constant">True</span>, right_index=<span class="org-constant">True</span>)
- .to_csv(<span class="org-string">'mean.bed'</span>,
-         sep=<span class="org-string">'\t'</span>,
-         columns=[<span class="org-string">'#Chr'</span>, <span class="org-string">'start'</span>, <span class="org-string">'end'</span>, <span class="org-string">'pid'</span>, <span class="org-string">'gid'</span>, <span class="org-string">'strand'</span>] + <span class="org-builtin">list</span>(mean.columns),
-         header=<span class="org-constant">True</span>,
-         index=<span class="org-constant">False</span>,
-         index_label=<span class="org-constant">False</span>)
-)
-</pre>
-</div>
-
-<p>
-Index the phenotype file.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-sh" id="orgca08f84"><span class="org-builtin">export</span> $<span class="org-variable-name">input</span>
-sbatch --partition=mstephens --wait
-<span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/bash</span>
-sort -k1,1 -k2,2n -k3,3n $<span class="org-variable-name">input</span> | bgzip &gt;$<span class="org-variable-name">input</span>.gz
-tabix -p bed $<span class="org-variable-name">input</span>.gz
-</pre>
-</div>
-
-<pre class="example">
-Submitted batch job 40920147
-
-</pre>
-
-<p>
-Run the QTL mapping.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-sh" id="orgf1335fe"><span class="org-builtin">export</span> $<span class="org-variable-name">pheno</span>
-sbatch --partition=mstephens -c4 -J $<span class="org-variable-name">pheno</span>-qtl -o $<span class="org-variable-name">pheno</span>-qtl.log
-<span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/bash</span>
-parallel -j4 qtltools cis --vcf /project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz --bed $<span class="org-variable-name">pheno</span>.bed.gz --nominal=0.01 --chunk {#} 100 --out $<span class="org-variable-name">pheno</span>-qtl.{#}.txt ::: $(<span class="org-sh-quoted-exec">seq</span> 1 100)
-</pre>
-</div>
-
-<p>
-Read the results.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span class="org-variable-name">mean_qtls</span> = (pd.concat([pd.read_table(<span class="org-string">'mean-qtl.{}.txt'</span>.<span class="org-builtin">format</span>(i), header=<span class="org-constant">None</span>, sep=<span class="org-string">' '</span>) <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-builtin">range</span>(1, 101) <span class="org-keyword">if</span> os.path.getsize(<span class="org-string">'mean-qtl.{}.txt'</span>.<span class="org-builtin">format</span>(i)) &gt; 0])
-             .rename(columns={i: x <span class="org-keyword">for</span> i, x <span class="org-keyword">in</span> <span class="org-builtin">enumerate</span>([<span class="org-string">'gene'</span>, <span class="org-string">'chr'</span>, <span class="org-string">'start'</span>, <span class="org-string">'end'</span>, <span class="org-string">'strand'</span>, <span class="org-string">'num_vars'</span>, <span class="org-string">'distance'</span>, <span class="org-string">'id'</span>, <span class="org-string">'var_chr'</span>, <span class="org-string">'var_start'</span>, <span class="org-string">'var_end'</span>, <span class="org-string">'p'</span>, <span class="org-string">'beta'</span>, <span class="org-string">'top'</span>])})
-             .set_index(<span class="org-string">'gene'</span>))
-mean_qtls.head()
-</pre>
-</div>
-
-<pre class="example">
-                chr   start     end strand  num_vars  distance id var_chr  \
-gene                                                                          
-ENSG00000237683  chr1  134902  139379      -      1720    134902  T    chr1   
-ENSG00000237683  chr1  134902  139379      -      1720    134902  C    chr1   
-ENSG00000237683  chr1  134902  139379      -      1720    134902  G    chr1   
-ENSG00000237683  chr1  134902  139379      -      1720    134902  A    chr1   
-ENSG00000237683  chr1  134902  139379      -      1720    134902  T    chr1   
-
-                 var_start  var_end         p      beta  top  
-gene                                                          
-ENSG00000237683     793228        0  0.004931  0.569071    0  
-ENSG00000237683     796101        0  0.008686  0.527685    0  
-ENSG00000237683     845275        0  0.006838  0.175679    0  
-ENSG00000237683     846339        0  0.008093  0.215268    0  
-ENSG00000237683     846490        0  0.008093  0.215268    0  
-</pre>
-
-<p>
-<b>TODO:</b> Permutation testing within QTLtools? Multiple testing correction by
-<code>ashr</code>?
-</p>
-
-<p>
-Compute the total number of QTLs detected.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython">mean_qtls.groupby(level=0)[<span class="org-string">'chr'</span>].agg(<span class="org-builtin">len</span>).<span class="org-builtin">sum</span>()
-</pre>
-</div>
-
-<pre class="example">
-9287
-
-</pre>
-
-<p>
-Compare against the bulk RNA-Seq mean-QTLs.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span class="org-keyword">def</span> <span class="org-function-name">bulk_mean_qtl_format</span>(row):
-  <span class="org-variable-name">row</span>[<span class="org-string">'pid'</span>] = row[<span class="org-string">'pid'</span>].split(<span class="org-string">'.'</span>)[0]
-  row[<span class="org-string">'rsid'</span>], row[<span class="org-string">'var_chr'</span>], <span class="org-variable-name">row</span>[<span class="org-string">'var_start'</span>] = row[<span class="org-string">'dummy2'</span>].split(<span class="org-string">'.'</span>)
-  <span class="org-keyword">del</span> row[<span class="org-string">'dummy2'</span>]
-  <span class="org-keyword">return</span> row
-
-<span class="org-variable-name">bulk_mean_qtls</span> = (pd.read_table(<span class="org-string">'/project2/gilad/singlecell-qtl/bulk/permutations.all.RNAseq_run.fixed.txt.gz.bh.txt'</span>, sep=<span class="org-string">' '</span>)
-                  .<span class="org-builtin">apply</span>(bulk_mean_qtl_format, axis=1)
-                  .set_index(<span class="org-string">'pid'</span>))
-bulk_mean_qtls.head()
-</pre>
-</div>
-
-<pre class="example">
-                      bpval        rsid var_chr var_start
-pid                                                        
-ENSG00000047056  1.065450e-03  rs12268949   chr10   1104257
-ENSG00000196139  6.354310e-03   rs1937889   chr10   5057741
-ENSG00000237943  2.074140e-04   rs4515867   chr10   6672053
-ENSG00000165623  1.970260e-04   rs7893239   chr10  13275510
-ENSG00000152457  2.142050e-09   rs7084951   chr10  15013439
-</pre>
-</div>
-</div>
-
-<div id="outline-container-orgc8a9fe1" class="outline-2">
-<h2 id="orgc8a9fe1">Variance-QTL calling</h2>
 </div>
 
 <div id="outline-container-orga4d85dd" class="outline-2">
@@ -532,7 +310,7 @@ easier.
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2017-12-22 Fri 15:33</p>
+<p class="date">Created: 2018-01-13 Sat 18:43</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>

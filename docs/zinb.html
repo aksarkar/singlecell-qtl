@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2017-12-15 Fri 19:20 -->
+<!-- 2018-01-14 Sun 17:15 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ZINB estimation</title>
@@ -227,6 +227,28 @@ for the JavaScript code in this tag.
  }
 /*]]>*///-->
 </script>
+<script type="text/x-mathjax-config">
+    MathJax.Hub.Config({
+        displayAlign: "center",
+        displayIndent: "0em",
+
+        "HTML-CSS": { scale: 100,
+                        linebreaks: { automatic: "false" },
+                        webFont: "TeX"
+                       },
+        SVG: {scale: 100,
+              linebreaks: { automatic: "false" },
+              font: "TeX"},
+        NativeMML: {scale: 100},
+        TeX: { equationNumbers: {autoNumber: "AMS"},
+               MultLineWidth: "85%",
+               TagSide: "right",
+               TagIndent: ".8em"
+             }
+});
+</script>
+<script type="text/javascript"
+        src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.0/MathJax.js?config=TeX-AMS_HTML"></script>
 </head>
 <body>
 <div id="content">
@@ -235,113 +257,478 @@ for the JavaScript code in this tag.
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents">
 <ul>
-<li><a href="#org374a8fe">Introduction</a></li>
-<li><a href="#org18a6830">Model specification and inference</a></li>
+<li><a href="#org470ab93">Introduction</a></li>
+<li><a href="#org5a724da">Quality control</a></li>
+<li><a href="#org8fd5c16">Read the data</a></li>
+<li><a href="#orgde4b91c">Maximum likelihood estimation</a></li>
+<li><a href="#org9aaf67c">Mean-QTL calling</a></li>
+<li><a href="#orgad41e3e">Dispersion-QTL calling</a></li>
 </ul>
 </div>
 </div>
 
-<div id="outline-container-org374a8fe" class="outline-2">
-<h2 id="org374a8fe">Introduction</h2>
-<div class="outline-text-2" id="text-org374a8fe">
+<div id="outline-container-org470ab93" class="outline-2">
+<h2 id="org470ab93">Introduction</h2>
+<div class="outline-text-2" id="text-org470ab93">
 <p>
-Here, we estimate means, variances, and dropout rates of the single cell data
-using a hierarchical zero-inflated negative binomial (ZINB) model.
+The simplest approach to call mean/variance QTLs is to estimate a mean and a
+dispersion for each individual, treat them as continuous phenotypes, and plug
+into standard QTL mapping software.
 </p>
 
 <p>
-The key issues are:
+Here, we find maximum likelihood estimates of a zero-inflated negative
+binomial model for the dropout, mean, and dispersion per individual per gene.
 </p>
-
-<ol class="org-ol">
-<li><p>
-<b>This model does not use genotype information.</b> The basic idea is that
-after fitting the model, we will recover an individual-by-gene mean matrix
-and individual-by-gene dispersion matrix. We can use the columns of this
-matrix as continuous phenotypes to plug into existing QTL mapping
-software.
-</p>
-
-<p>
-Related, this model does not use covariates (either measured or inferred)
-to estimate any of the parameters.
-</p></li>
-</ol>
 </div>
 </div>
 
-<div id="outline-container-org18a6830" class="outline-2">
-<h2 id="org18a6830">Model specification and inference</h2>
-<div class="outline-text-2" id="text-org18a6830">
+<div id="outline-container-org5a724da" class="outline-2">
+<h2 id="org5a724da">Quality control</h2>
+<div class="outline-text-2" id="text-org5a724da">
 <p>
-We implement ZINB in <a href="http://edwardlib.org/">Edward</a> (not shown). This allows us to succinctly
-describe the model below:
+Filter out cells on percent spike-in and gene detection rate, and filter out
+genes on individual detection rate.
 </p>
 
 <div class="org-src-container">
-<pre class="src src-ipython"><span class="org-variable-name">Normal</span> = ed.models.Normal
-<span class="org-variable-name">p</span>, <span class="org-variable-name">n</span> = umi_qc.shape
-<span class="org-variable-name">_</span>, <span class="org-variable-name">m</span> = onehot.shape
-
-<span class="org-variable-name">shared_dropout</span> = Normal(tf.zeros([1]), scale=tf.ones([1]))
-<span class="org-variable-name">shared_mean</span> = Normal(tf.zeros([1]), scale=tf.ones([1]))
-<span class="org-variable-name">shared_dispersion</span> = Normal(tf.zeros([1]), scale=tf.ones([1]))
-
-<span class="org-variable-name">gene_dropout</span> = Normal(tf.ones([1, p]) * shared_dropout, scale=tf.ones([1, p]))
-<span class="org-variable-name">gene_mean</span> = Normal(tf.ones([1, p]) * shared_mean, scale=tf.ones([1, p]))
-<span class="org-variable-name">gene_dispersion</span> = Normal(tf.ones([1, p]) * shared_dispersion, scale=tf.ones([1, p]))
-
-<span class="org-variable-name">dropout</span> = Normal(loc=tf.ones([n, 1]) * gene_dropout, scale=tf.constant(1.))
-<span class="org-variable-name">mean</span> = Normal(loc=tf.ones([m, 1]) * gene_mean, scale=tf.constant(1.))
-<span class="org-variable-name">dispersion</span> = Normal(loc=tf.ones([m, 1]) * gene_dispersion, scale=tf.constant(1.))
-
-<span class="org-variable-name">y</span> = ZINB(dropout=dropout,
-         mean=tf.exp(tf.matmul(onehot, mean)),
-         dispersion=tf.exp(tf.matmul(onehot, dispersion)))
+<pre class="src src-ipython" id="org65b6f97"><span class="org-variable-name">keep_cells</span> = functools.<span class="org-builtin">reduce</span>(
+  np.logical_and,
+  [
+    annotations[<span class="org-string">'reads_ercc'</span>] / annotations.<span class="org-builtin">filter</span>(like=<span class="org-string">'reads_'</span>, axis=1).agg(np.<span class="org-builtin">sum</span>, axis=1) &lt; 0.5,
+    annotations[<span class="org-string">'detect_hs'</span>] &gt; 4000,
+    annotations[<span class="org-string">'chip_id'</span>] != <span class="org-string">'NA19092'</span>,
+  ]).values
+<span class="org-variable-name">keep_genes</span> = functools.<span class="org-builtin">reduce</span>(
+  np.logical_and,
+  [
+    (umi.groupby(annotations[<span class="org-string">'chip_id'</span>].values, axis=1).agg(np.<span class="org-builtin">sum</span>) &gt; 0).<span class="org-builtin">apply</span>(<span class="org-keyword">lambda</span> x: x.mean() &gt; 0.5, axis=1)
+  ]).values
+<span class="org-variable-name">umi_qc</span> = umi.loc[keep_genes, keep_cells]
+<span class="org-variable-name">annotations_qc</span> = annotations.loc[keep_cells]
+umi_qc.mask(umi_qc == 0)
+umi_qc.shape
 </pre>
 </div>
 
-<p>
-We fit the model using variational inference.
-</p>
+<pre class="example">
+(15636, 1810)
+
+</pre>
 
 <div class="org-src-container">
-<pre class="src src-ipython"><span class="org-variable-name">q_shared_dropout</span> = Normal(tf.Variable(tf.zeros([1, p])), tf.Variable(tf.zeros([1])))
-<span class="org-variable-name">q_shared_mean</span> = Normal(tf.Variable(tf.zeros([1, p])), tf.Variable(tf.zeros([1])))
-<span class="org-variable-name">q_shared_dispersion</span> = Normal(tf.Variable(tf.zeros([1, p])), tf.Variable(tf.zeros([1])))
-
-<span class="org-variable-name">q_dropout</span> = Normal(tf.Variable(tf.zeros([n, p])), tf.Variable(tf.zeros([n, p])))
-<span class="org-variable-name">q_mean</span> = Normal(tf.Variable(tf.zeros([m, p])), tf.Variable(tf.zeros([m, p])))
-<span class="org-variable-name">q_dispersion</span> = Normal(tf.Variable(tf.zeros([m, p])), tf.Variable(tf.zeros([m, p])))
+<pre class="src src-ipython" id="org1e8d763"><span class="org-variable-name">individuals</span> = <span class="org-builtin">sorted</span>(annotations_qc[<span class="org-string">'chip_id'</span>].unique())
+<span class="org-variable-name">onehot</span> = np.zeros((umi_qc.shape[1], <span class="org-builtin">len</span>(individuals)), dtype=np.float32)
+onehot[np.arange(onehot.shape[0]),annotations_qc[<span class="org-string">'chip_id'</span>].<span class="org-builtin">apply</span>(<span class="org-keyword">lambda</span> x: individuals.index(x))] = 1
 </pre>
 </div>
 
 <div class="org-src-container">
-<pre class="src src-ipython"><span class="org-comment-delimiter"># </span><span class="org-comment">IMPORTANT: we have to explicitly make sure Edward does not use analytical</span>
-<span class="org-comment-delimiter"># </span><span class="org-comment">KL because it does not DTRT</span>
-<span class="org-variable-name">inf</span> = ed.ReparameterizationKLqp(
-  latent_vars={
-    shared_dropout: q_shared_dropout,
-    shared_mean: q_shared_mean,
-    shared_dispersion: q_shared_dispersion,
-    dropout: q_dropout,
-    mean: q_mean,
-    dispersion: q_dispersion,
-  },
-  data={y: umi_qc.values.T})
-inf.run(n_samples=10)
+<pre class="src src-ipython">umi_qc.to_csv(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/umi-qc.txt.gz'</span>, sep=<span class="org-string">' '</span>, compression=<span class="org-string">'gzip'</span>)
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">onehot</span> = pd.DataFrame(onehot, columns=individuals, index=umi_qc.columns)
+onehot.to_csv(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/onehot-qc.txt.gz'</span>, sep=<span class="org-string">' '</span>, compression=<span class="org-string">'gzip'</span>)
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org8fd5c16" class="outline-2">
+<h2 id="org8fd5c16">Read the data</h2>
+<div class="outline-text-2" id="text-org8fd5c16">
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">umi</span> = pd.read_table(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/umi-qc.txt.gz'</span>, sep=<span class="org-string">' '</span>, index_col=0, nrows=4000)
+<span class="org-variable-name">onehot</span> = pd.read_table(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/onehot-qc.txt.gz'</span>, sep=<span class="org-string">' '</span>, index_col=0)
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgde4b91c" class="outline-2">
+<h2 id="orgde4b91c">Maximum likelihood estimation</h2>
+<div class="outline-text-2" id="text-orgde4b91c">
+<p>
+Use gradient descent to maximize the likelihood of the zero-inflated negative
+binomial model for the data.
+</p>
+
+<p>
+\[ r_{ijk} = \text{number of reads for individual \(i\), cell \(j\), gene
+  \(k\)} \]
+</p>
+
+<p>
+\[ r_{ijk} = \pi_j \delta_0(r_{ijk}) + (1 - \pi_j) \mathcal{NB}(r_{ijk};
+  \mu_{ik}, \phi_{ik}) \]
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-keyword">def</span> <span class="org-function-name">log_zinb_positive</span>(x, mu, theta, pi, eps=1e-8):
+  <span class="org-doc">"""Log likelihood of x according to ZINB model</span>
+
+<span class="org-doc">  Lopez et al. "A deep generative model for gene expression profiles</span>
+<span class="org-doc">  from single-cell RNA sequencing"</span>
+
+<span class="org-doc">  c.f. Hilbe 2012, eq. 11.12, 11.13</span>
+
+<span class="org-doc">  mu: mean (&gt;0)</span>
+<span class="org-doc">  theta: inverse dispersion parameter (&gt;0)</span>
+<span class="org-doc">  pi:logit of the dropout parameter</span>
+
+<span class="org-doc">  """</span>
+  <span class="org-variable-name">case_zero</span> = tf.nn.softplus(-pi + theta * tf.log(theta + eps) - theta * tf.log(theta + mu + eps)) \
+              - tf.nn.softplus(-pi)
+  <span class="org-variable-name">case_non_zero</span> = - pi - tf.nn.softplus(- pi) \
+                  + theta * tf.log(theta + eps) - theta * tf.log(theta + mu + eps) \
+                  + x * tf.log(mu + eps) - x * tf.log(theta + mu + eps) \
+                  + tf.lgamma(x + theta) - tf.lgamma(theta) - tf.lgamma(x + 1)
+  <span class="org-variable-name">mask</span> = tf.cast(tf.less(x, eps), tf.float32)
+  <span class="org-keyword">return</span> tf.reduce_sum(tf.multiply(mask, case_zero) + tf.multiply(1 - mask, case_non_zero))
+
+<span class="org-keyword">def</span> <span class="org-function-name">fit</span>(umi, onehot, learning_rate=1e-2, max_epochs=1000):
+  <span class="org-doc">"""Return estimated dropout log odds, log mean, and log dispersion</span>
+
+<span class="org-doc">  umi - count matrix (n x p; float32)</span>
+<span class="org-doc">  onehot - mapping of individuals to cells (m x n; float32)</span>
+
+<span class="org-doc">  Returns:</span>
+
+<span class="org-doc">  llik - log likelihood</span>
+<span class="org-doc">  dropout - spike log odds (n x 1)</span>
+<span class="org-doc">  log_mean - log mean parameter (m x p)</span>
+<span class="org-doc">  log_disp - log dispersion parameter (m x p)</span>
+
+<span class="org-doc">  """</span>
+  <span class="org-variable-name">n</span>, <span class="org-variable-name">p</span> = umi.shape
+  <span class="org-variable-name">_</span>, <span class="org-variable-name">m</span> = onehot.shape
+
+  <span class="org-variable-name">umi</span> = tf.Variable(umi, trainable=<span class="org-constant">False</span>)
+  <span class="org-variable-name">onehot</span> = tf.Variable(onehot, trainable=<span class="org-constant">False</span>)
+
+  <span class="org-variable-name">index</span> = tf.placeholder(tf.int32)
+
+  <span class="org-variable-name">dropout</span> = tf.Variable(tf.zeros([n, 1]))
+  <span class="org-variable-name">mean</span> = tf.exp(tf.Variable(tf.zeros([m, p])))
+  <span class="org-variable-name">dispersion</span> = tf.exp(tf.Variable(tf.zeros([m, p])))
+
+  <span class="org-variable-name">llik</span> = log_zinb_positive(
+    umi,
+    tf.matmul(onehot, mean),
+    tf.matmul(onehot, dispersion),
+    dropout)
+
+  <span class="org-variable-name">train</span> = tf.train.RMSPropOptimizer(learning_rate=learning_rate).minimize(-llik)
+
+  <span class="org-variable-name">opt</span> = [tf.log(mean), tf.log(dispersion), dropout]
+  <span class="org-variable-name">curr</span> = <span class="org-builtin">float</span>(<span class="org-string">'-inf'</span>)
+  <span class="org-keyword">with</span> tf.Session() <span class="org-keyword">as</span> sess:
+    sess.run(tf.global_variables_initializer())
+    <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-builtin">range</span>(max_epochs):
+      <span class="org-variable-name">_</span>, <span class="org-variable-name">update</span> = sess.run([train, llik], feed_dict={index: i % p})
+      <span class="org-keyword">if</span> <span class="org-keyword">not</span> np.isfinite(update):
+        <span class="org-keyword">raise</span> tf.train.NanLossDuringTrainingError
+      <span class="org-keyword">if</span> <span class="org-keyword">not</span> i % 100:
+        <span class="org-keyword">print</span>(i, update)
+    <span class="org-keyword">return</span> sess.run(opt)
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">mean</span>, <span class="org-variable-name">dispersion</span>, <span class="org-variable-name">dropout</span> = fit(
+  umi.values.T.astype(np.float32),
+  onehot.values.astype(np.float32),
+  learning_rate=1e-2)
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-ipython">pd.DataFrame(mean.T, index=umi.index, columns=onehot.columns).to_csv(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/mean.txt.gz'</span>, sep=<span class="org-string">' '</span>, compression=<span class="org-string">'gzip'</span>)
+pd.DataFrame(dispersion.T, index=umi.index, columns=onehot.columns).to_csv(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/dispersion.txt.gz'</span>, sep=<span class="org-string">' '</span>, compression=<span class="org-string">'gzip'</span>)
+pd.DataFrame(dropout, index=umi.columns).to_csv(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/dropout.txt.gz'</span>, sep=<span class="org-string">' '</span>, compression=<span class="org-string">'gzip'</span>)
 </pre>
 </div>
 
 <p>
-486e4f90-66f8-4f28-94a5-eef5ca89d28e
+This estimation problem takes too long to run interactively, so <a href="https://orgmode.org/manual/Extracting-source-code.html">tangle</a> it
+from this file and run it through <code>sbatch</code>.
 </p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(org-babel-tangle)
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-sh">sbatch --partition=broadwl --mem=8G --time=120 --job-name=zinb --output=zinb.out --error=zinb.err
+<span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/bash</span>
+<span class="org-builtin">source</span> activate scqtl
+python zinb.py
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org9aaf67c" class="outline-2">
+<h2 id="org9aaf67c">Mean-QTL calling</h2>
+<div class="outline-text-2" id="text-org9aaf67c">
+<p>
+Write out the <a href="https://qtltools.github.io/qtltools/pages/input_files.html">phenotype file</a> for <code>QTLtools</code>.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org389e5be"><span class="org-variable-name">gene_info</span> = (pd.read_table(<span class="org-string">'/home/aksarkar/projects/singlecell-qtl/data/scqtl-genes.txt.gz'</span>)
+             .set_index(<span class="org-string">'gene'</span>)
+             .query(<span class="org-string">'source == "H. sapiens"'</span>)
+             .query(<span class="org-string">'chr != "hsX"'</span>)
+             .query(<span class="org-string">'chr != "hsY"'</span>)
+             .query(<span class="org-string">'chr != "hsMT"'</span>))
+gene_info.head()
+</pre>
+</div>
+
+<pre class="example">
+                chr      start        end      name strand      source
+gene                                                                    
+ENSG00000000419  hs20   49551404   49575092      DPM1      -  H. sapiens
+ENSG00000000457   hs1  169818772  169863408     SCYL3      -  H. sapiens
+ENSG00000000460   hs1  169631245  169823221  C1orf112      +  H. sapiens
+ENSG00000000938   hs1   27938575   27961788       FGR      -  H. sapiens
+ENSG00000000971   hs1  196621008  196716634       CFH      +  H. sapiens
+</pre>
+
+<pre class="example">
+                chr      start        end      name strand      source
+gene                                                                    
+ENSG00000000419  hs20   49551404   49575092      DPM1      -  H. sapiens
+ENSG00000000457   hs1  169818772  169863408     SCYL3      -  H. sapiens
+ENSG00000000460   hs1  169631245  169823221  C1orf112      +  H. sapiens
+ENSG00000000938   hs1   27938575   27961788       FGR      -  H. sapiens
+ENSG00000000971   hs1  196621008  196716634       CFH      +  H. sapiens
+</pre>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="org5a26fff"><span class="org-keyword">def</span> <span class="org-function-name">qtltools_format</span>(row):
+  <span class="org-variable-name">row</span>[<span class="org-string">'#Chr'</span>] = <span class="org-string">'chr{}'</span>.<span class="org-builtin">format</span>(row[<span class="org-string">'chr'</span>][2:])
+  <span class="org-variable-name">row</span>[<span class="org-string">'gid'</span>] = row.name
+  <span class="org-variable-name">row</span>[<span class="org-string">'pid'</span>] = row.name
+  <span class="org-keyword">return</span> row
+
+<span class="org-keyword">def</span> <span class="org-function-name">write_pheno_file</span>(pheno, gene_info, output_file):
+  (gene_info
+   .<span class="org-builtin">apply</span>(qtltools_format, axis=1)
+   .merge(pheno, left_index=<span class="org-constant">True</span>, right_index=<span class="org-constant">True</span>)
+   .to_csv(output_file,
+           sep=<span class="org-string">'\t'</span>,
+           columns=[<span class="org-string">'#Chr'</span>, <span class="org-string">'start'</span>, <span class="org-string">'end'</span>, <span class="org-string">'pid'</span>, <span class="org-string">'gid'</span>, <span class="org-string">'strand'</span>] + <span class="org-builtin">list</span>(pheno.columns),
+           header=<span class="org-constant">True</span>,
+           index=<span class="org-constant">False</span>,
+           index_label=<span class="org-constant">False</span>)
+  )
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">mean</span> = pd.read_table(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/mean.txt.gz'</span>, sep=<span class="org-string">' '</span>, index_col=0)
+mean.head()
+</pre>
+</div>
+
+<pre class="example">
+                NA18489   NA18498   NA18499   NA18501   NA18502   NA18505  \
+gene                                                                          
+ENSG00000000003  2.132201  1.862085  1.994689  2.203277  1.994263  1.873698   
+ENSG00000000005 -1.304971 -1.137107 -2.085783 -1.440596 -2.309412 -1.127515   
+ENSG00000000419  1.408769  1.332950  1.690473  1.656058  1.669314  1.605577   
+ENSG00000000457 -0.993338 -2.940411 -0.788445 -0.932689 -0.906488 -0.360301   
+ENSG00000000460  0.403482 -0.106141  0.520277  0.567161  0.443905  0.670071   
+
+                  NA18507   NA18508   NA18519   NA18520    ...      NA19119  \
+gene                                                       ...                
+ENSG00000000003  2.185227  1.984693  2.175263  1.960210    ...     2.228055   
+ENSG00000000005 -1.499075 -3.047421 -1.563732 -2.949254    ...    -2.113694   
+ENSG00000000419  1.834280  1.659502  1.692899  1.579187    ...     1.806168   
+ENSG00000000457 -0.763892 -0.913251 -1.235485 -0.913332    ...    -1.210785   
+ENSG00000000460  0.474492  0.521287  0.653763  0.439643    ...     0.771924   
+
+                  NA19128   NA19153   NA19159   NA19190   NA19193   NA19203  \
+gene                                                                          
+ENSG00000000003  2.316742  2.286229  1.866834  2.146526  2.011522  1.547072   
+ENSG00000000005 -2.109344 -0.943781 -3.445312 -2.083898 -2.493103 -1.347846   
+ENSG00000000419  2.015950  1.903451  1.413075  1.730209  1.968157  1.188535   
+ENSG00000000457 -0.705963 -0.792029 -0.870194 -0.492704 -1.142365 -2.031550   
+ENSG00000000460  0.898602  0.601947  0.173087  0.454041  0.562179  0.153599   
+
+                  NA19207   NA19210   NA19257  
+gene                                           
+ENSG00000000003  2.275138  2.277549  2.068974  
+ENSG00000000005 -1.550304 -1.269496 -2.731949  
+ENSG00000000419  1.865725  2.116240  2.024805  
+ENSG00000000457 -0.965920 -0.678640 -0.859062  
+ENSG00000000460  0.797515  0.873859  0.751235  
+
+[5 rows x 32 columns]
+</pre>
+
+<div class="org-src-container">
+<pre class="src src-ipython">write_pheno_file(mean, gene_info, <span class="org-string">'/scratch/midway2/aksarkar/singlecell/mean.bed'</span>)
+</pre>
+</div>
+
+<p>
+Index the phenotype file.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh" id="org78fe142"><span class="org-builtin">export</span> <span class="org-variable-name">input</span>=$<span class="org-variable-name">input</span>
+sbatch --partition=$<span class="org-variable-name">partition</span> --wait
+<span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/bash</span>
+sort -k1,1 -k2,2n -k3,3n $<span class="org-variable-name">input</span> | bgzip &gt;$<span class="org-variable-name">input</span>.gz
+tabix -p bed $<span class="org-variable-name">input</span>.gz
+</pre>
+</div>
+
+<p>
+Run the QTL mapping.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh" id="org93dc535"><span class="org-builtin">export</span> <span class="org-variable-name">pheno</span>=$<span class="org-variable-name">pheno</span>
+sbatch --partition=$<span class="org-variable-name">partition</span> -N1 -c4 -J $<span class="org-variable-name">pheno</span>-qtl -o $<span class="org-variable-name">pheno</span>-qtl.log
+<span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/bash</span>
+<span class="org-builtin">source</span> activate scqtl
+module load parallel
+parallel -j4 qtltools cis --vcf /project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz --bed $<span class="org-variable-name">pheno</span>.bed.gz --nominal=0.01 --chunk {#} 100 --out $<span class="org-variable-name">pheno</span>-qtl.{#}.txt ::: $(<span class="org-sh-quoted-exec">seq</span> 1 100)
+</pre>
+</div>
+
+<p>
+Read the results.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">file_names</span> = [<span class="org-string">'mean-qtl.{}.txt'</span>.<span class="org-builtin">format</span>(i) <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-builtin">range</span>(1, 101)]
+<span class="org-variable-name">mean_qtls</span> = (pd.concat([pd.read_table(f, header=<span class="org-constant">None</span>, sep=<span class="org-string">' '</span>) <span class="org-keyword">for</span> f <span class="org-keyword">in</span> file_names <span class="org-keyword">if</span> os.path.exists(f) <span class="org-keyword">and</span> os.path.getsize(f) &gt; 0])
+             .rename(columns={i: x <span class="org-keyword">for</span> i, x <span class="org-keyword">in</span> <span class="org-builtin">enumerate</span>([<span class="org-string">'gene'</span>, <span class="org-string">'chr'</span>, <span class="org-string">'start'</span>, <span class="org-string">'end'</span>, <span class="org-string">'strand'</span>, <span class="org-string">'num_vars'</span>, <span class="org-string">'distance'</span>, <span class="org-string">'id'</span>, <span class="org-string">'var_chr'</span>, <span class="org-string">'var_start'</span>, <span class="org-string">'var_end'</span>, <span class="org-string">'p'</span>, <span class="org-string">'beta'</span>, <span class="org-string">'top'</span>])})
+             .sort_values(<span class="org-string">'p'</span>)
+             .set_index(<span class="org-string">'gene'</span>))
+mean_qtls[mean_qtls[<span class="org-string">'top'</span>] == 1].head()
+</pre>
+</div>
+
+<pre class="example">
+                 chr   start     end strand  num_vars  distance id var_chr  \
+gene                                                                           
+ENSG00000239857   chr7  916190  936073      +      7763   -916190  C    chr7   
+ENSG00000169026   chr4  675619  683230      -      4952    675619  C    chr4   
+ENSG00000101282  chr20  939096  982907      -      6734    939096  G   chr20   
+ENSG00000186777   chr4  264465  299110      -      3531    264465  A    chr4   
+ENSG00000116014  chr19  917288  921015      +      6659   -917288  G   chr19   
+
+                 var_start  var_end             p     beta  top  
+gene                                                             
+ENSG00000239857     986498        0  1.273710e-16 -4.71915    1  
+ENSG00000169026     810152        0  2.231630e-15 -4.74142    1  
+ENSG00000101282    1025679        0  3.021520e-15 -5.27573    1  
+ENSG00000186777     897103        0  4.407960e-15 -4.66579    1  
+ENSG00000116014     619338        0  1.081230e-14 -5.08811    1  
+</pre>
+
+<p>
+<b>TODO:</b> Permutation testing within QTLtools? lfsr estimation by <code>ashr</code>?
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgad41e3e" class="outline-2">
+<h2 id="orgad41e3e">Dispersion-QTL calling</h2>
+<div class="outline-text-2" id="text-orgad41e3e">
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">disp</span> = pd.read_table(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/dispersion.txt.gz'</span>, sep=<span class="org-string">' '</span>, index_col=0)
+disp.head()
+</pre>
+</div>
+
+<pre class="example">
+                NA18489   NA18498   NA18499   NA18501   NA18502   NA18505  \
+gene                                                                          
+ENSG00000000003  1.092216  1.349166  1.376199  1.151147  1.597304  1.619764   
+ENSG00000000005  1.245627  7.247635 -0.062590  1.342859 -1.007912  0.411424   
+ENSG00000000419  1.913491  2.318849  1.598213  1.189439  1.753222  2.410088   
+ENSG00000000457 -0.699626  5.044208  0.099977 -0.107983 -0.469346  4.960834   
+ENSG00000000460  1.130231  6.989872  1.317161  1.452350  0.750685  7.235482   
+
+                  NA18507   NA18508   NA18519   NA18520    ...      NA19119  \
+gene                                                       ...                
+ENSG00000000003  1.129030  1.115463  1.833903  1.555660    ...     1.315700   
+ENSG00000000005 -0.469625  4.921400 -0.688780  5.141915    ...     6.322920   
+ENSG00000000419  1.036118  0.865517  1.408871  1.298325    ...     3.754308   
+ENSG00000000457 -0.108463  0.456174 -0.609740 -0.225618    ...     0.740946   
+ENSG00000000460  0.996670  0.676970  2.453142  1.251912    ...     0.717296   
+
+                  NA19128   NA19153   NA19159   NA19190   NA19193   NA19203  \
+gene                                                                          
+ENSG00000000003  0.693213  1.513592  1.016362  1.539210  1.417464  1.459843   
+ENSG00000000005 -0.657682 -0.084881  4.429851  0.978749  5.818314  0.995584   
+ENSG00000000419  0.771990  1.453221  1.603899  1.464751  1.067739  4.966578   
+ENSG00000000457 -0.268748  0.060874 -0.039906  0.009648  0.003913  6.323813   
+ENSG00000000460  0.866060  0.424351  7.455638  0.493674  1.032298  0.203354   
+
+                  NA19207   NA19210   NA19257  
+gene                                           
+ENSG00000000003  1.296685  1.494707  1.368400  
+ENSG00000000005  0.493389 -1.198948  5.263945  
+ENSG00000000419  1.536127  1.775915  1.279451  
+ENSG00000000457 -0.081436  0.800806 -0.193967  
+ENSG00000000460  1.145072  1.669772  1.276706  
+
+[5 rows x 32 columns]
+</pre>
+
+<div class="org-src-container">
+<pre class="src src-ipython">write_pheno_file(disp, gene_info, <span class="org-string">'/scratch/midway2/aksarkar/singlecell/disp.bed'</span>)
+</pre>
+</div>
+
+<p>
+Index the phenotype file
+</p>
+
+<pre class="example">
+Submitted batch job 42125661
+
+</pre>
+
+<p>
+Run <code>qtltools</code>
+</p>
+
+<pre class="example">
+Submitted batch job 42125670
+
+</pre>
+
+<p>
+There are no detected dispersion QTLs, so the following code raises an exception.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">file_names</span> = [<span class="org-string">'disp-qtl.{}.txt'</span>.<span class="org-builtin">format</span>(i) <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-builtin">range</span>(1, 101)]
+<span class="org-variable-name">disp_qtls</span> = (pd.concat([pd.read_table(f, header=<span class="org-constant">None</span>, sep=<span class="org-string">' '</span>) <span class="org-keyword">for</span> f <span class="org-keyword">in</span> file_names <span class="org-keyword">if</span> os.path.exists(f) <span class="org-keyword">and</span> os.path.getsize(f) &gt; 0])
+             .rename(columns={i: x <span class="org-keyword">for</span> i, x <span class="org-keyword">in</span> <span class="org-builtin">enumerate</span>([<span class="org-string">'gene'</span>, <span class="org-string">'chr'</span>, <span class="org-string">'start'</span>, <span class="org-string">'end'</span>, <span class="org-string">'strand'</span>, <span class="org-string">'num_vars'</span>, <span class="org-string">'distance'</span>, <span class="org-string">'id'</span>, <span class="org-string">'var_chr'</span>, <span class="org-string">'var_start'</span>, <span class="org-string">'var_end'</span>, <span class="org-string">'p'</span>, <span class="org-string">'beta'</span>, <span class="org-string">'top'</span>])})
+             .sort_values(<span class="org-string">'p'</span>)
+             .set_index(<span class="org-string">'gene'</span>))
+disp_qtls[disp_qtls[<span class="org-string">'top'</span>] == 1].head()
+</pre>
+</div>
 </div>
 </div>
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2017-12-15 Fri 19:20</p>
+<p class="date">Created: 2018-01-14 Sun 17:15</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>
