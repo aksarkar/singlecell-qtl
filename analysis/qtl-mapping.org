@@ -3,24 +3,13 @@
 
 * Introduction
 
-  Here, we set up the infrastructure to call mean and variance QTLs. 
-
-  The key issues are:
-
-  1. *How do we account for confounders in UMI?* As a first pass (to test the
-     pipeline), use preliminary QC filters and assume no confounding.
-  2. *Do we account for zeros?* As a first pass, we can estimate means and
-     variances per individual using only detected genes.
-  3. *Do we jointly model mean and variance QTLs?* As a first pass, we can
-     simply include the observed mean in the variance QTL model (like ~voom~,
-     [[http://genomebiology.com/2014/15/2/R29][Law et al 2014]]).
-  4. *What parameters are shared between cells/individuals/genes?* As a first
-     pass, assume no parameters are shared.
+  Here, we set up the infrastructure to call mean and variance QTLs, assuming
+  that we have [[file:zinb.org][previously estimated means and variances per individual, per
+  gene.]]
 
 * Setup                                                            :noexport:
 
   #+BEGIN_SRC emacs-lisp
-    (org-babel-lob-ingest "/home/aksarkar/projects/singlecell-qtl/analysis/sc-vs-bulk.org")
     (org-babel-lob-ingest "/home/aksarkar/.emacs.d/org-templates/library.org")
   #+END_SRC
 
@@ -43,25 +32,306 @@
   :RESULTS:
   :END:
 
-  #+CALL: concordance-def()
+* Mean-QTL calling
+
+  Write out the [[https://qtltools.github.io/qtltools/pages/input_files.html][phenotype file]] for ~QTLtools~.
+
+  #+NAME: get-gene-info
+  #+BEGIN_SRC ipython
+    gene_info = (pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/scqtl-genes.txt.gz')
+                 .set_index('gene')
+                 .query('source == "H. sapiens"')
+                 .query('chr != "hsX"')
+                 .query('chr != "hsY"')
+                 .query('chr != "hsMT"'))
+    gene_info.head()
+  #+END_SRC
+
+  #+RESULTS: get-gene-info
+  :RESULTS:
+  # Out[3]:
+  #+BEGIN_EXAMPLE
+    chr      start        end      name strand      source
+    gene
+    ENSG00000000419  hs20   49551404   49575092      DPM1      -  H. sapiens
+    ENSG00000000457   hs1  169818772  169863408     SCYL3      -  H. sapiens
+    ENSG00000000460   hs1  169631245  169823221  C1orf112      +  H. sapiens
+    ENSG00000000938   hs1   27938575   27961788       FGR      -  H. sapiens
+    ENSG00000000971   hs1  196621008  196716634       CFH      +  H. sapiens
+  #+END_EXAMPLE
+  :END:
+
+  #+NAME: write-pheno-def
+  #+BEGIN_SRC ipython
+    def qtltools_format(row):
+      row['#Chr'] = 'chr{}'.format(row['chr'][2:])
+      row['gid'] = row.name
+      row['pid'] = row.name
+      return row
+
+    def write_pheno_file(pheno, gene_info, output_file):
+      (gene_info
+       .apply(qtltools_format, axis=1)
+       .merge(pheno, left_index=True, right_index=True)
+       .to_csv(output_file,
+               sep='\t',
+               columns=['#Chr', 'start', 'end', 'pid', 'gid', 'strand'] + list(pheno.columns),
+               header=True,
+               index=False,
+               index_label=False)
+      )
+  #+END_SRC
+
+  #+RESULTS: write-pheno-def
+  :RESULTS:
+  # Out[7]:
+  :END:
+
+  #+BEGIN_SRC ipython
+    mean = (pd.read_table('/scratch/midway2/aksarkar/singlecell/mean.txt.gz', sep=' ', index_col=0)
+            .rename(columns=lambda x: x[2:] if x.startswith('NA') else x))
+    mean.head()
+  #+END_SRC
 
   #+RESULTS:
   :RESULTS:
+  # Out[15]:
+  #+BEGIN_EXAMPLE
+    18489     18498     18499     18501     18502     18505  \
+    gene
+    ENSG00000000003  2.153422  1.908637  2.020811  2.235909  2.016276  1.916526
+    ENSG00000000005  2.717537  2.686136  1.970839  1.882466  1.934783  1.743753
+    ENSG00000000419  1.473960  1.381287  1.748404  1.715845  1.722835  1.655344
+    ENSG00000000457  2.695425  2.869927  1.661883  1.750790  1.644461  1.388998
+    ENSG00000000460  1.246338  1.228745  1.070099  1.072112  1.127348  0.976623
+
+    18507     18508     18519     18520    ...        19119  \
+    gene                                                       ...
+    ENSG00000000003  2.183926  2.057383  2.185234  1.972367    ...     2.228020
+    ENSG00000000005  1.854442  2.808901  2.835537  2.211654    ...     0.904509
+    ENSG00000000419  1.876334  1.778172  1.699735  1.670322    ...     1.816166
+    ENSG00000000457  1.649863  2.590687  2.809266  1.887073    ...     0.504516
+    ENSG00000000460  1.125625  1.514480  1.059698  1.170255    ...     1.119757
+
+    19128     19153     19159     19190     19193     19203  \
+    gene
+    ENSG00000000003  2.325042  2.305453  1.893718  2.172396  2.011524  1.691384
+    ENSG00000000005  1.855778  1.865121  2.956233  2.029287  2.142070  2.838911
+    ENSG00000000419  2.068414  1.947017  1.612372  1.774130  1.974698  1.299714
+    ENSG00000000457  1.459007  1.825049  2.791146  1.664737  1.957186  2.885063
+    ENSG00000000460  1.290979  1.329372  1.050951  1.334755  1.301709  2.220205
+
+    19207     19210     19257
+    gene
+    ENSG00000000003  2.275174  2.267549  2.076748
+    ENSG00000000005  1.951805  1.327100  1.759800
+    ENSG00000000419  1.876612  2.129439  2.040515
+    ENSG00000000457  1.824563  0.950023  1.269692
+    ENSG00000000460  1.437071  1.137395  1.117885
+
+    [5 rows x 32 columns]
+  #+END_EXAMPLE
   :END:
 
-  #+CALL: load-data-defs()
+  Visualize the data and the inferred parameters:
+
+  #+BEGIN_SRC ipython :ipyfile figure/zinb.org/ZSWIM7.png
+    plt.clf()
+
+  #+END_SRC
+
+  #+BEGIN_SRC ipython
+    write_pheno_file(mean, gene_info, '/scratch/midway2/aksarkar/singlecell/mean.bed')
+  #+END_SRC
 
   #+RESULTS:
   :RESULTS:
+  # Out[16]:
   :END:
 
-  #+CALL: load-data()
+  Index the phenotype file.
+
+  #+NAME: tabix
+  #+BEGIN_SRC sh :var input="mean.bed" :var partition="broadwl" :dir /scratch/midway2/aksarkar/singlecell :eval never-export
+    export input=$input
+    sbatch --partition=$partition --wait
+    #!/bin/bash
+    sort -k1,1 -k2,2n -k3,3n $input | bgzip >$input.gz
+    tabix -p bed $input.gz
+  #+END_SRC
+
+  #+RESULTS: tabix
+  : Submitted batch job 42159688
+
+  Run the QTL mapping.
+
+  #+NAME: qtltools
+  #+BEGIN_SRC sh :var pheno="mean" :var partition="broadwl" :dir /scratch/midway2/aksarkar/singlecell :eval never-export 
+    export pheno=$pheno
+    sbatch --partition=$partition -N1 -c4 -J $pheno-qtl -o $pheno-qtl.log --wait
+    #!/bin/bash
+    source activate scqtl
+    module load parallel
+    parallel -j4 qtltools cis --vcf /project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz --bed $pheno.bed.gz --nominal=0.01 --chunk {#} 100 --out $pheno-qtl.{#}.txt ::: $(seq 1 100)
+  #+END_SRC
+
+  #+RESULTS: qtltools
+  : Submitted batch job 42159718
+
+  Read the results.
+
+  #+BEGIN_SRC ipython
+    file_names = ['mean-qtl.{}.txt'.format(i) for i in range(1, 101)]
+    mean_qtls = (pd.concat([pd.read_table(f, header=None, sep=' ') for f in file_names if os.path.exists(f) and os.path.getsize(f) > 0])
+                 .rename(columns={i: x for i, x in enumerate(['gene', 'chr', 'start', 'end', 'strand', 'num_vars', 'distance', 'id', 'var_chr', 'var_start', 'var_end', 'p', 'beta', 'top'])})
+                 .sort_values('p')
+                 .set_index('gene'))
+    mean_qtls[mean_qtls['top'] == 1].head()
+  #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  : ((20327, 2261), (34608, 15))
+  # Out[17]:
+  #+BEGIN_EXAMPLE
+    chr   start     end strand  num_vars  distance id var_chr  \
+    gene
+    ENSG00000079101  chr18  596989  650334      +      5663   -596989  T   chr18
+    ENSG00000023191  chr11  494513  507300      -      4391    494513  G   chr11
+    ENSG00000177951  chr11  167785  207428      -      3537    167785  A   chr11
+    ENSG00000177697  chr11  832844  839831      +      5570   -832844  A   chr11
+    ENSG00000147364   chr8  356429  421225      +      6388   -356429  T    chr8
+
+    var_start  var_end             p      beta  top
+    gene
+    ENSG00000079101    1127932        0  1.743600e-09 -1.552050    1
+    ENSG00000023191     296256        0  1.174030e-08  0.589488    1
+    ENSG00000177951     436759        0  2.953120e-07  1.175580    1
+    ENSG00000177697     436759        0  7.761760e-07  1.124540    1
+    ENSG00000147364    1086162        0  7.801650e-07  0.816134    1
+  #+END_EXAMPLE
   :END:
 
+  *TODO:* Permutation testing within QTLtools? lfsr estimation by ~ashr~?
+
+* Dispersion-QTL calling
+
+  #+BEGIN_SRC ipython
+    disp = (pd.read_table('/scratch/midway2/aksarkar/singlecell/dispersion.txt.gz', sep=' ', index_col=0)
+            .rename(columns=lambda x: x[2:] if x.startswith('NA') else x))
+    disp.head()
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[21]:
+  #+BEGIN_EXAMPLE
+    18489      18498     18499      18501     18502  \
+    gene
+    ENSG00000000003   1.167245   1.706873  1.599450   1.408319  1.711105
+    ENSG00000000005  10.335133  10.322262  9.905348   9.639630  9.502019
+    ENSG00000000419   2.515978   3.487238  2.140802   1.586118  2.195697
+    ENSG00000000457  10.371654  10.217912  9.560677  10.536921  9.979990
+    ENSG00000000460   9.115197   9.561979  9.006826   8.728274  8.700228
+
+    18505      18507      18508      18519     18520  \
+    gene
+    ENSG00000000003  2.077771   1.193537   1.548394   1.833913  1.753378
+    ENSG00000000005  9.582265  10.065374  10.365082  10.301587  9.595152
+    ENSG00000000419  3.818562   1.306487   1.470760   1.536752  2.150593
+    ENSG00000000457  9.621971   9.546401  10.254088  10.192816  9.819939
+    ENSG00000000460  8.882592   8.865636   9.414287   8.887925  9.314652
+
+    ...        19119      19128     19153      19159  \
+    gene               ...
+    ENSG00000000003    ...     1.325692   0.747701  1.708594   1.236187
+    ENSG00000000005    ...     8.796814  10.149561  9.674639  10.224201
+    ENSG00000000419    ...     3.763241   1.062397  1.820775   8.463470
+    ENSG00000000457    ...     8.593268   9.501520  9.566214  10.446822
+    ENSG00000000460    ...     7.901440   8.161574  8.895837   9.729097
+
+    19190      19193      19203      19207     19210  \
+    gene
+    ENSG00000000003   1.769961   1.417471   2.819164   1.286686  1.484697
+    ENSG00000000005   9.807590   9.849161  10.167520  10.156749  9.744061
+    ENSG00000000419   1.816306   1.169699   8.482072   1.614174  1.811550
+    ENSG00000000457  10.278067  10.191409   9.601987   9.680202  9.291765
+    ENSG00000000460   9.537437   8.882127  10.174777   9.343502  8.246989
+
+    19257
+    gene
+    ENSG00000000003  1.418264
+    ENSG00000000005  9.928991
+    ENSG00000000419  1.382229
+    ENSG00000000457  9.178885
+    ENSG00000000460  8.454962
+
+    [5 rows x 32 columns]
+  #+END_EXAMPLE
+  :END:
+
+  #+BEGIN_SRC ipython
+    write_pheno_file(disp, gene_info, '/scratch/midway2/aksarkar/singlecell/disp.bed')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[22]:
+  :END:
+
+  Index the phenotype file
+
+  #+CALL: tabix(input="disp.bed")
+
+  #+RESULTS:
+  : Submitted batch job 42160151
+
+  Run ~qtltools~
+
+  #+CALL: qtltools(pheno="disp")
+
+  #+RESULTS:
+  : Submitted batch job 42160171
+
+  #+BEGIN_SRC ipython
+    file_names = ['disp-qtl.{}.txt'.format(i) for i in range(1, 101)]
+    disp_qtls = (pd.concat([pd.read_table(f, header=None, sep=' ') for f in file_names if os.path.exists(f) and os.path.getsize(f) > 0])
+                 .rename(columns={i: x for i, x in enumerate(['gene', 'chr', 'start', 'end', 'strand', 'num_vars', 'distance', 'id', 'var_chr', 'var_start', 'var_end', 'p', 'beta', 'top'])})
+                 .sort_values('p')
+                 .set_index('gene'))
+    disp_qtls[disp_qtls['top'] == 1].head()
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[24]:
+  #+BEGIN_EXAMPLE
+    chr   start     end strand  num_vars  distance id var_chr  \
+    gene
+    ENSG00000169026   chr4  675619  683230      -      4952    675619  A    chr4
+    ENSG00000187583   chr1  901878  911245      +      4140   -901878  A    chr1
+    ENSG00000142082  chr11  215459  236931      -      3636    215459  G   chr11
+    ENSG00000172748   chr8  182138  197342      +      5320   -182138  G    chr8
+    ENSG00000255284  chr11  777579  784297      +      5412   -777579  A   chr11
+
+    var_start  var_end             p     beta  top
+    gene
+    ENSG00000169026     550716        0  2.262070e-18 -6.27400    1
+    ENSG00000187583    1658302        0  6.812100e-18 -7.00223    1
+    ENSG00000142082     865448        0  6.317700e-17  3.68775    1
+    ENSG00000172748     229562        0  9.070000e-16 -6.24766    1
+    ENSG00000255284     600513        0  2.076950e-15 -6.11760    1
+  #+END_EXAMPLE
+  :END:
+
+  #+BEGIN_SRC ipython
+    disp_qtls.shape[0]
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[26]:
+  : 9720
+  :END:
 * Next steps
    
   1. We previously used half-sibling regression ([[https://www.pnas.org/cgi/doi/10.1073/pnas.1511656113][Scholkopf et al 2016]]) to correct

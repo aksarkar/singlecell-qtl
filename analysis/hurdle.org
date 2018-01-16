@@ -652,18 +652,6 @@
   :RESULTS:
   :END:
 
-  Top mean-effect QTLs (by lfsr)
-
-  #+BEGIN_SRC 
-    res.sort_values('rate_effect_lfsr', ascending=True).head()
-  #+END_SRC
-
-  Top dispersion-effect QTLs (by lfsr)
-
-  #+BEGIN_SRC 
-    res.sort_values('disp_effect_lfsr', ascending=True).head()
-  #+END_SRC
-
 * Next steps
 
   1. *Do we need to worry about the residual variance estimate being
