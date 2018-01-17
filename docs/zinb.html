@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2018-01-16 Tue 14:50 -->
+<!-- 2018-01-17 Wed 14:20 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mean/dispersion estimation</title>
@@ -260,10 +260,9 @@ for the JavaScript code in this tag.
 <li><a href="#org470ab93">Introduction</a></li>
 <li><a href="#org2ac4bff">Quality control</a></li>
 <li><a href="#org8fd5c16">Read the data</a></li>
-<li><a href="#orge04a75b">NB estimation</a></li>
-<li><a href="#org6a35fba">ZINB estimation</a></li>
-<li><a href="#org634647f">Gradient descent</a></li>
-<li><a href="#org1cf1267">Evaluate the estimated parameters</a></li>
+<li><a href="#org8aa5dec">Model specification</a></li>
+<li><a href="#org43c9fea">Serial algorithm</a></li>
+<li><a href="#orgcb0c7cd">Parallel algorithm</a></li>
 </ul>
 </div>
 </div>
@@ -278,8 +277,9 @@ into standard QTL mapping software.
 </p>
 
 <p>
-Here, we find maximum likelihood estimates of a zero-inflated negative
-binomial model for the dropout, mean, and dispersion per individual per gene.
+As a first pass, perform stringent QC to avoid the sparsest genes and simply
+find maximum likelihood estimates of a negative binomial model for the mean,
+and dispersion per individual per gene.
 </p>
 </div>
 </div>
@@ -336,6 +336,21 @@ onehot.shape
 
 </pre>
 
+<p>
+Check that one-hot encoding is OK:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython">(umi_qc.loc[<span class="org-string">'ENSG00000000003'</span>, (annotations_qc[<span class="org-string">'chip_id'</span>] == <span class="org-string">'NA18489'</span>).values] == 
+ umi_qc.loc[<span class="org-string">'ENSG00000000003'</span>, onehot.dot(np.eye(onehot.shape[1])[0]).astype(<span class="org-builtin">bool</span>)]).<span class="org-builtin">all</span>()
+</pre>
+</div>
+
+<pre class="example">
+True
+
+</pre>
+
 <div class="org-src-container">
 <pre class="src src-ipython">umi_qc.to_csv(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/umi-qc.txt.gz'</span>, sep=<span class="org-string">' '</span>, compression=<span class="org-string">'gzip'</span>)
 </pre>
@@ -357,7 +372,7 @@ onehot.shape
 <h2 id="org8fd5c16">Read the data</h2>
 <div class="outline-text-2" id="text-org8fd5c16">
 <div class="org-src-container">
-<pre class="src src-ipython"><span class="org-variable-name">umi</span> = pd.read_table(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/umi-qc.txt.gz'</span>, sep=<span class="org-string">' '</span>, index_col=0)
+<pre class="src src-ipython" id="org2ae7f13"><span class="org-variable-name">umi</span> = pd.read_table(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/umi-qc.txt.gz'</span>, sep=<span class="org-string">' '</span>, index_col=0)
 <span class="org-variable-name">onehot</span> = pd.read_table(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/onehot-qc.txt.gz'</span>, sep=<span class="org-string">' '</span>, index_col=0)
 <span class="org-variable-name">annotations</span> = pd.read_table(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/annotations-qc.txt.gz'</span>, sep=<span class="org-string">' '</span>, index_col=0)
 </pre>
@@ -365,9 +380,9 @@ onehot.shape
 </div>
 </div>
 
-<div id="outline-container-orge04a75b" class="outline-2">
-<h2 id="orge04a75b">NB estimation</h2>
-<div class="outline-text-2" id="text-orge04a75b">
+<div id="outline-container-org8aa5dec" class="outline-2">
+<h2 id="org8aa5dec">Model specification</h2>
+<div class="outline-text-2" id="text-org8aa5dec">
 <p>
 Let \(r_{ijk}\) denote the number of molecules for individual \(i\), cell
 \(j\), gene \(k\). Let \(R_{ij}\) denote a size factor for each cell. As a
@@ -375,7 +390,45 @@ first pass, define \(R_{ij} = \sum_k r_{ijk}\).
 </p>
 
 <p>
-Following Hilbe 2012, the log likelihood is:
+Following Hilbe 2012, we derive the negative binomial as a Poisson-Gamma
+mixture:
+</p>
+
+<p>
+\[ r_{ijk} \sim \text{Pois}(R_{ij} \mu_{ik} u_{ijk}) \]
+</p>
+
+<p>
+\[ u_{ijk} \sim \text{Gamma}(\phi_{ik}^{-1}, \phi_{ik}^{-1}) \]
+</p>
+
+<p>
+Marginalizing out \(u\) yields a distribution with the following properties:
+</p>
+
+<p>
+\[ E[r_{ijk} \mid \cdot] = R_{ij} \mu_{ik} \]
+</p>
+
+<p>
+\[ V_j[r_{ijk} \mid \cdot] = R_{ij} \mu_{ik} + (R_{ij} \mu_{ik})^2 \phi_{ik}
+  \]
+</p>
+
+<p>
+The latter follows from the law of total variance. Dropping subscripts for
+convenience:
+</p>
+
+<p>
+\[ V[r] = E[V[r \mid u]] + V[E[r \mid u]] \]
+\[ V[r] = E[R \mu u] + V[R \mu u] \]
+\[ V[r] = R \mu + (R \mu)^2 V[u] \]
+\[ V[r] = R \mu + (R \mu)^2 \phi \]
+</p>
+
+<p>
+The log likelihood is:
 </p>
 
 <p>
@@ -384,19 +437,14 @@ Following Hilbe 2012, the log likelihood is:
 
 <p>
 We have multiple data points (30-200 cells) per mean/dispersion parameter, so
-simply minimizing the negative log likelihood using automatic differentation
-and gradient descent should give reasonable estimates.
+simply minimizing the negative log likelihood should give reasonable
+estimates.
 </p>
-</div>
-</div>
 
-<div id="outline-container-org6a35fba" class="outline-2">
-<h2 id="org6a35fba">ZINB estimation</h2>
-<div class="outline-text-2" id="text-org6a35fba">
 <p>
-As before, let \(r_{ijk}\) denote the number of molecules for individual
-\(i\), cell \(j\), gene \(k\). Let \(\pi_{ij}\) denote the probability of a
-"technical zero" (i.e., not arising from the negative-binomial).
+We can additionally account for zero-inflation, by letting \(\pi_{ij}\)
+denote the probability of a "technical zero" (i.e., not arising from the
+negative-binomial).
 </p>
 
 <p>
@@ -419,11 +467,143 @@ they shared between cells/genes?</b>
 </div>
 </div>
 
-<div id="outline-container-org634647f" class="outline-2">
-<h2 id="org634647f">Gradient descent</h2>
-<div class="outline-text-2" id="text-org634647f">
+<div id="outline-container-org43c9fea" class="outline-2">
+<h2 id="org43c9fea">Serial algorithm</h2>
+<div class="outline-text-2" id="text-org43c9fea">
 <p>
-We implement the inference algorithm in tensorflow.
+Optimize each pair of mean/dispersion parameters by sequentially considering
+each subset of the data (set of cells per gene per individual). Use
+<code>multiprocessing</code> to parallelize this over chunks of genes.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-keyword">import</span> functools
+<span class="org-keyword">import</span> matplotlib.pyplot <span class="org-keyword">as</span> plt
+<span class="org-keyword">import</span> numpy <span class="org-keyword">as</span> np
+<span class="org-keyword">import</span> os
+<span class="org-keyword">import</span> pandas <span class="org-keyword">as</span> pd
+<span class="org-keyword">import</span> multiprocessing <span class="org-keyword">as</span> mp
+<span class="org-keyword">import</span> scipy.optimize
+<span class="org-keyword">import</span> scipy.special
+
+<span class="org-variable-name">umi</span> = pd.read_table(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/umi-qc.txt.gz'</span>, sep=<span class="org-string">' '</span>, index_col=0)
+<span class="org-variable-name">onehot</span> = pd.read_table(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/onehot-qc.txt.gz'</span>, sep=<span class="org-string">' '</span>, index_col=0)
+<span class="org-variable-name">annotations</span> = pd.read_table(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/annotations-qc.txt.gz'</span>, sep=<span class="org-string">' '</span>, index_col=0)
+</pre>
+</div>
+
+<p>
+Optimize the negative log-likelihood using BFGS.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-keyword">def</span> <span class="org-function-name">nll</span>(theta, x, size):
+  <span class="org-variable-name">mean</span>, <span class="org-variable-name">inv_disp</span> = np.exp(theta)
+  <span class="org-variable-name">mean</span> *= size
+  <span class="org-keyword">assert</span> mean.shape == x.shape
+  <span class="org-keyword">return</span> -(x * np.log(mean / inv_disp + 1e-8) -
+           x * np.log(1 + mean / inv_disp + 1e-8) -
+           inv_disp * np.log(1 + mean / inv_disp + 1e-8) +
+           scipy.special.gammaln(x + inv_disp) -
+           scipy.special.gammaln(inv_disp) -
+           scipy.special.gammaln(x + 1)).<span class="org-builtin">sum</span>()
+
+<span class="org-keyword">def</span> <span class="org-function-name">fit_scipy</span>(x, size):
+  <span class="org-variable-name">res</span> = scipy.optimize.minimize(fun=nll, x0=[0, 0], args=(x, size), tol=1e-4)
+  <span class="org-keyword">if</span> res.success:
+    <span class="org-keyword">return</span> <span class="org-builtin">tuple</span>(res.x)
+  <span class="org-keyword">else</span>:
+    <span class="org-keyword">return</span> (<span class="org-builtin">float</span>(<span class="org-string">'nan'</span>), <span class="org-builtin">float</span>(<span class="org-string">'nan'</span>))
+
+<span class="org-keyword">def</span> <span class="org-function-name">process_chunk</span>(x, size):
+  <span class="org-variable-name">res</span> = pd.DataFrame([(gene, k) + fit_scipy(row.loc[g].values, size.loc[g].values)
+                       <span class="org-keyword">for</span> gene, row <span class="org-keyword">in</span> x.iterrows()
+                       <span class="org-keyword">for</span> k, g <span class="org-keyword">in</span> row.groupby(annotations[<span class="org-string">'chip_id'</span>].values).groups.items()])
+  <span class="org-variable-name">res.columns</span> = [<span class="org-string">'gene'</span>, <span class="org-string">'individual'</span>, <span class="org-string">'mean'</span>, <span class="org-string">'dispersion'</span>]
+  res.set_index(<span class="org-string">'gene'</span>, inplace=<span class="org-constant">True</span>)
+  <span class="org-keyword">return</span> res
+</pre>
+</div>
+
+<p>
+Output record-like data for each parameter to make reassembling the result
+easier.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython">process_chunk(umi.iloc[:5], size).head()
+</pre>
+</div>
+
+<pre class="example">
+individual      mean  dispersion
+gene
+ENSG00000000003    NA18519 -8.223728    2.564775
+ENSG00000000003    NA18862 -8.406216    2.263670
+ENSG00000000003    NA19093 -8.339645    2.393590
+ENSG00000000003    NA19128 -8.479335    2.293822
+ENSG00000000003    NA18852 -8.609513    2.454818
+</pre>
+
+<div class="org-src-container">
+<pre class="src src-ipython">Out[90].pivot(columns=<span class="org-string">'individual'</span>, values=<span class="org-string">'mean'</span>) 
+</pre>
+</div>
+
+<pre class="example">
+individual        NA18519   NA18852   NA18862   NA19093   NA19128
+gene
+ENSG00000000003 -8.223728 -8.609513 -8.406216 -8.339645 -8.479335
+</pre>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">f</span> = functools.partial(process_chunk, size=umi.agg(np.<span class="org-builtin">sum</span>))
+<span class="org-keyword">with</span> mp.Pool() <span class="org-keyword">as</span> pool:
+  <span class="org-variable-name">result</span> = pd.concat(pool.<span class="org-builtin">map</span>(f, np.array_split(umi, 100)))
+
+<span class="org-variable-name">log_mean</span> = result.pivot(columns=<span class="org-string">'individual'</span>, values=<span class="org-string">'mean'</span>)
+<span class="org-variable-name">log_disp</span> = result.pivot(columns=<span class="org-string">'individual'</span>, values=<span class="org-string">'dispersion'</span>) 
+
+log_mean.to_csv(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/mean.txt.gz'</span>, sep=<span class="org-string">' '</span>, compression=<span class="org-string">'gzip'</span>)
+log_disp.to_csv(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/disp.txt.gz'</span>, sep=<span class="org-string">' '</span>, compression=<span class="org-string">'gzip'</span>)
+</pre>
+</div>
+
+<p>
+Tangle the code from this file and submit requeseting multiple cores.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(org-babel-tangle)
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-sh">sbatch --partition=<span class="org-string">"broadwl"</span> -N1 -c16 --out=nb.out
+<span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/bash</span>
+<span class="org-builtin">source</span> activate scqtl
+python nb.py
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgcb0c7cd" class="outline-2">
+<h2 id="orgcb0c7cd">Parallel algorithm</h2>
+<div class="outline-text-2" id="text-orgcb0c7cd">
+<p>
+We should be able to jointly optimize all of the parameters together, using
+one-hot encoding to map parameters to data points. This will speed up
+inference by making it more amenable to running on the GPU.
+</p>
+
+<p>
+Use tensorflow to automatically differentiate the negative log likelihood and
+perform gradient descent.
+</p>
+
+<p>
+<b>Open problem: this doesn't give the same answer as the serial algorithm</b>
 </p>
 
 <div class="org-src-container">
@@ -499,7 +679,7 @@ We implement the inference algorithm in tensorflow.
         zinb_llik(umi, size_factor * tf.matmul(onehot, mean),
                   tf.matmul(onehot, inv_disp), dropout))
     <span class="org-keyword">else</span>:
-      <span class="org-variable-name">llik</span> = tf.reduce_mean(
+      <span class="org-variable-name">llik</span> = tf.reduce_sum(
         nb_llik(umi, size_factor * tf.matmul(onehot, mean),
                 tf.matmul(onehot, inv_disp)))
 
@@ -525,18 +705,13 @@ We implement the inference algorithm in tensorflow.
 </pre>
 </div>
 
-<p>
-As a first pass, perform stringent QC to avoid the sparsest genes and don't
-consider zero inflation.
-</p>
-
 <div class="org-src-container">
 <pre class="src src-ipython"><span class="org-variable-name">mean</span>, <span class="org-variable-name">dispersion</span> = fit(
-  umi=umi.values.T.astype(np.float32),
+  umi=umi.iloc[:5].values.T.astype(np.float32),
   onehot=onehot.values.astype(np.float32),
-  size_factor=annotations[<span class="org-string">'mol_hs'</span>].values.astype(np.float32).reshape(-1, 1),
+  size_factor=umi.agg(np.<span class="org-builtin">sum</span>).astype(np.float32).values.reshape(-1, 1),
   learning_rate=1e-2,
-  max_epochs=2000)
+  max_epochs=8000)
 </pre>
 </div>
 
@@ -558,34 +733,64 @@ followup analysis, while running the hard estimation problem on a GPU node.)
 </div>
 
 <div class="org-src-container">
-<pre class="src src-sh">sbatch --partition=gpu2 --gres=gpu:1 --mem=16G --time=15 --job-name=zinb --output=zinb.out --error=zinb.err
+<pre class="src src-sh">sbatch --partition=gpu2 --gres=gpu:1 --mem=16G --time=30 --job-name=zinb --output=zinb.out --error=zinb.err
 <span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/bash</span>
 <span class="org-builtin">source</span> activate scqtl
 python zinb.py
 </pre>
 </div>
-</div>
-</div>
 
-<div id="outline-container-org1cf1267" class="outline-2">
-<h2 id="org1cf1267">Evaluate the estimated parameters</h2>
-<div class="outline-text-2" id="text-org1cf1267">
 <div class="org-src-container">
 <pre class="src src-ipython"><span class="org-variable-name">log_mean</span> = pd.read_table(<span class="org-string">'mean.txt.gz'</span>, sep=<span class="org-string">' '</span>, index_col=0)
-<span class="org-variable-name">log_disp</span> = pd.read_table(<span class="org-string">'dispersion.txt.gz'</span>, sep=<span class="org-string">' '</span>, index_col=0)
 </pre>
 </div>
 
-<p>
-<b>Open problem: how to (visually, quantitatively) check these estimates are
-reasonable by comparing to the actual data?</b>
-</p>
+<div class="org-src-container">
+<pre class="src src-ipython">log_mean.iloc[0]
+</pre>
+</div>
+
+<pre class="example">
+NA18489   -4.398294
+NA18498   -0.912375
+NA18499   -8.331842
+NA18501   -4.439660
+NA18502   -8.615689
+NA18505   -2.217484
+NA18507   -8.427283
+NA18508   -8.501702
+NA18519   -2.994574
+NA18520   -8.178504
+NA18522   -2.792260
+NA18852   -3.843915
+NA18853   -3.828545
+NA18856   -3.346244
+NA18858   -8.192317
+NA18862   -6.147875
+NA18870   -3.389510
+NA19093   -5.520665
+NA19098   -2.783728
+NA19101   -4.907929
+NA19114   -4.064628
+NA19116   -6.399668
+NA19119   -0.846079
+NA19128   -5.853783
+NA19153   -4.680749
+NA19159   -1.396034
+NA19190   -4.761320
+NA19193   -2.739177
+NA19203   -1.009947
+NA19207   -4.496280
+NA19210   -3.107379
+NA19257   -4.354552
+Name: ENSG00000000003, dtype: float64
+</pre>
 </div>
 </div>
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2018-01-16 Tue 14:50</p>
+<p class="date">Created: 2018-01-17 Wed 14:20</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>
