@@ -242,7 +242,7 @@
   each subset of the data (set of cells per gene per individual). Use
   ~multiprocessing~ to parallelize this over chunks of genes.
 
-  #+BEGIN_SRC ipython :tangle nb.py :noweb yes
+  #+BEGIN_SRC ipython :tangle nb.py :noweb yes :exports none
     <<zinb-imports>>
     import multiprocessing as mp
     import scipy.optimize

@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2018-01-17 Wed 14:20 -->
+<!-- 2018-01-17 Wed 16:39 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mean/dispersion estimation</title>
@@ -476,22 +476,6 @@ each subset of the data (set of cells per gene per individual). Use
 <code>multiprocessing</code> to parallelize this over chunks of genes.
 </p>
 
-<div class="org-src-container">
-<pre class="src src-ipython"><span class="org-keyword">import</span> functools
-<span class="org-keyword">import</span> matplotlib.pyplot <span class="org-keyword">as</span> plt
-<span class="org-keyword">import</span> numpy <span class="org-keyword">as</span> np
-<span class="org-keyword">import</span> os
-<span class="org-keyword">import</span> pandas <span class="org-keyword">as</span> pd
-<span class="org-keyword">import</span> multiprocessing <span class="org-keyword">as</span> mp
-<span class="org-keyword">import</span> scipy.optimize
-<span class="org-keyword">import</span> scipy.special
-
-<span class="org-variable-name">umi</span> = pd.read_table(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/umi-qc.txt.gz'</span>, sep=<span class="org-string">' '</span>, index_col=0)
-<span class="org-variable-name">onehot</span> = pd.read_table(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/onehot-qc.txt.gz'</span>, sep=<span class="org-string">' '</span>, index_col=0)
-<span class="org-variable-name">annotations</span> = pd.read_table(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/annotations-qc.txt.gz'</span>, sep=<span class="org-string">' '</span>, index_col=0)
-</pre>
-</div>
-
 <p>
 Optimize the negative log-likelihood using BFGS.
 </p>
@@ -570,7 +554,7 @@ log_disp.to_csv(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/d
 </div>
 
 <p>
-Tangle the code from this file and submit requeseting multiple cores.
+Tangle the code from this file and submit requesting multiple cores.
 </p>
 
 <div class="org-src-container">
@@ -790,7 +774,7 @@ Name: ENSG00000000003, dtype: float64
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2018-01-17 Wed 14:20</p>
+<p class="date">Created: 2018-01-17 Wed 16:39</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>

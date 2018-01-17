@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2018-01-16 Tue 14:09 -->
+<!-- 2018-01-17 Wed 16:41 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>QTL mapping pipeline</title>
@@ -236,9 +236,9 @@ for the JavaScript code in this tag.
 <div id="text-table-of-contents">
 <ul>
 <li><a href="#org5ed2a04">Introduction</a></li>
+<li><a href="#org94b2817">Genotype processing</a></li>
 <li><a href="#org051ecfa">Mean-QTL calling</a></li>
 <li><a href="#org018b84e">Dispersion-QTL calling</a></li>
-<li><a href="#orga4d85dd">Next steps</a></li>
 </ul>
 </div>
 </div>
@@ -254,11 +254,31 @@ gene.</a>
 </div>
 </div>
 
+<div id="outline-container-org94b2817" class="outline-2">
+<h2 id="org94b2817">Genotype processing</h2>
+<div class="outline-text-2" id="text-org94b2817">
+<p>
+<code>QTLtools</code> reported 0 variants in cis for an unexpected number of genes when
+using the provided genotype file, so reprocess the genotypes to fix it.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">sbatch --partition=broadwl --job-name process-geno
+<span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/bash</span>
+<span class="org-builtin">set</span> -e
+<span class="org-builtin">source</span> activate scqtl
+zcat /project/compbio/jointLCLs/genotype/hg19/YRI/vcf/chr{?,??}.hg19.vcf.gz | awk <span class="org-string">'BEGIN {print "##fileformat=VCFv4.1"} NR == 1 || ! /CHROM/ {print}'</span> | bgzip &gt;genotypes.vcf.gz
+tabix genotypes.vcf.gz
+</pre>
+</div>
+</div>
+</div>
+
 <div id="outline-container-org051ecfa" class="outline-2">
 <h2 id="org051ecfa">Mean-QTL calling</h2>
 <div class="outline-text-2" id="text-org051ecfa">
 <p>
-Write out the <a href="https://qtltools.github.io/qtltools/pages/input_files.html">phenotype file</a> for <code>QTLtools</code>.
+Write out the <a href="https://qtltools.github.io/qtltools/pages/input_files.html">phenotype file</a> for <code>qtltools</code>.
 </p>
 
 <div class="org-src-container">
@@ -303,56 +323,17 @@ ENSG00000000971   hs1  196621008  196716634       CFH      +  H. sapiens
 </pre>
 </div>
 
-<div class="org-src-container">
-<pre class="src src-ipython"><span class="org-variable-name">mean</span> = (pd.read_table(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/mean.txt.gz'</span>, sep=<span class="org-string">' '</span>, index_col=0)
-        .rename(columns=<span class="org-keyword">lambda</span> x: x[2:] <span class="org-keyword">if</span> x.startswith(<span class="org-string">'NA'</span>) <span class="org-keyword">else</span> x))
-mean.head()
-</pre>
-</div>
-
-<pre class="example">
-18489     18498     18499     18501     18502     18505  \
-gene
-ENSG00000000003  2.153422  1.908637  2.020811  2.235909  2.016276  1.916526
-ENSG00000000005  2.717537  2.686136  1.970839  1.882466  1.934783  1.743753
-ENSG00000000419  1.473960  1.381287  1.748404  1.715845  1.722835  1.655344
-ENSG00000000457  2.695425  2.869927  1.661883  1.750790  1.644461  1.388998
-ENSG00000000460  1.246338  1.228745  1.070099  1.072112  1.127348  0.976623
-
-18507     18508     18519     18520    ...        19119  \
-gene                                                       ...
-ENSG00000000003  2.183926  2.057383  2.185234  1.972367    ...     2.228020
-ENSG00000000005  1.854442  2.808901  2.835537  2.211654    ...     0.904509
-ENSG00000000419  1.876334  1.778172  1.699735  1.670322    ...     1.816166
-ENSG00000000457  1.649863  2.590687  2.809266  1.887073    ...     0.504516
-ENSG00000000460  1.125625  1.514480  1.059698  1.170255    ...     1.119757
-
-19128     19153     19159     19190     19193     19203  \
-gene
-ENSG00000000003  2.325042  2.305453  1.893718  2.172396  2.011524  1.691384
-ENSG00000000005  1.855778  1.865121  2.956233  2.029287  2.142070  2.838911
-ENSG00000000419  2.068414  1.947017  1.612372  1.774130  1.974698  1.299714
-ENSG00000000457  1.459007  1.825049  2.791146  1.664737  1.957186  2.885063
-ENSG00000000460  1.290979  1.329372  1.050951  1.334755  1.301709  2.220205
-
-19207     19210     19257
-gene
-ENSG00000000003  2.275174  2.267549  2.076748
-ENSG00000000005  1.951805  1.327100  1.759800
-ENSG00000000419  1.876612  2.129439  2.040515
-ENSG00000000457  1.824563  0.950023  1.269692
-ENSG00000000460  1.437071  1.137395  1.117885
-
-[5 rows x 32 columns]
-</pre>
-
 <p>
-Visualize the data and the inferred parameters:
+Read the estimated parameters. These might be missing due to failure to
+converge in the inference algorithm. As a first pass, mean-impute them by
+centering the data (ignoring missing values), and then filling in missing
+values with 0.
 </p>
 
 <div class="org-src-container">
-<pre class="src src-ipython">plt.clf()
-
+<pre class="src src-ipython"><span class="org-variable-name">mean</span> = (pd.read_table(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/mean.txt.gz'</span>, sep=<span class="org-string">' '</span>, index_col=0)
+        .transform(<span class="org-keyword">lambda</span> x: x - x.mean(), axis=1)
+        .fillna(0))
 </pre>
 </div>
 
@@ -375,16 +356,17 @@ tabix -p bed $<span class="org-variable-name">input</span>.gz
 </div>
 
 <p>
-Run the QTL mapping.
+Run the QTL mapping, using the approximate permutation test implemented in
+<code>QTLtools</code>.
 </p>
 
 <div class="org-src-container">
 <pre class="src src-sh" id="org5a3e21d"><span class="org-builtin">export</span> <span class="org-variable-name">pheno</span>=$<span class="org-variable-name">pheno</span>
-sbatch --partition=$<span class="org-variable-name">partition</span> -N1 -c4 -J $<span class="org-variable-name">pheno</span>-qtl -o $<span class="org-variable-name">pheno</span>-qtl.log --wait
+sbatch --partition=$<span class="org-variable-name">partition</span> -N1 -c16 -J $<span class="org-variable-name">pheno</span>-qtl -o $<span class="org-variable-name">pheno</span>-qtl.log
 <span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/bash</span>
 <span class="org-builtin">source</span> activate scqtl
 module load parallel
-parallel -j4 qtltools cis --vcf /project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz --bed $<span class="org-variable-name">pheno</span>.bed.gz --nominal=0.01 --chunk {#} 100 --out $<span class="org-variable-name">pheno</span>-qtl.{#}.txt ::: $(<span class="org-sh-quoted-exec">seq</span> 1 100)
+parallel -j16 qtltools cis --vcf /project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz --bed $<span class="org-variable-name">pheno</span>.bed.gz --permute=100 --chunk {#} 100 --out $<span class="org-variable-name">pheno</span>-qtl.{#}.txt ::: $(<span class="org-sh-quoted-exec">seq</span> 1 100)
 </pre>
 </div>
 
@@ -393,92 +375,108 @@ Read the results.
 </p>
 
 <div class="org-src-container">
-<pre class="src src-ipython"><span class="org-variable-name">file_names</span> = [<span class="org-string">'mean-qtl.{}.txt'</span>.<span class="org-builtin">format</span>(i) <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-builtin">range</span>(1, 101)]
-<span class="org-variable-name">mean_qtls</span> = (pd.concat([pd.read_table(f, header=<span class="org-constant">None</span>, sep=<span class="org-string">' '</span>) <span class="org-keyword">for</span> f <span class="org-keyword">in</span> file_names <span class="org-keyword">if</span> os.path.exists(f) <span class="org-keyword">and</span> os.path.getsize(f) &gt; 0])
-             .rename(columns={i: x <span class="org-keyword">for</span> i, x <span class="org-keyword">in</span> <span class="org-builtin">enumerate</span>([<span class="org-string">'gene'</span>, <span class="org-string">'chr'</span>, <span class="org-string">'start'</span>, <span class="org-string">'end'</span>, <span class="org-string">'strand'</span>, <span class="org-string">'num_vars'</span>, <span class="org-string">'distance'</span>, <span class="org-string">'id'</span>, <span class="org-string">'var_chr'</span>, <span class="org-string">'var_start'</span>, <span class="org-string">'var_end'</span>, <span class="org-string">'p'</span>, <span class="org-string">'beta'</span>, <span class="org-string">'top'</span>])})
-             .sort_values(<span class="org-string">'p'</span>)
-             .set_index(<span class="org-string">'gene'</span>))
-mean_qtls[mean_qtls[<span class="org-string">'top'</span>] == 1].head()
+<pre class="src src-ipython"><span class="org-keyword">def</span> <span class="org-function-name">read_qtltools_output</span>(pheno):
+  <span class="org-variable-name">file_names</span> = [<span class="org-string">'{}-qtl.{}.txt'</span>.<span class="org-builtin">format</span>(pheno, i) <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-builtin">range</span>(1, 101)]
+  <span class="org-keyword">return</span> (pd.concat([pd.read_table(f, header=<span class="org-constant">None</span>, sep=<span class="org-string">' '</span>)
+                     <span class="org-keyword">for</span> f <span class="org-keyword">in</span> file_names <span class="org-keyword">if</span> os.path.exists(f) <span class="org-keyword">and</span>
+                     os.path.getsize(f) &gt; 0])
+          .rename(columns={i: x <span class="org-keyword">for</span> i, x <span class="org-keyword">in</span> <span class="org-builtin">enumerate</span>(
+            [<span class="org-string">'gene'</span>, <span class="org-string">'chr'</span>, <span class="org-string">'start'</span>, <span class="org-string">'end'</span>, <span class="org-string">'strand'</span>, <span class="org-string">'num_vars'</span>,
+             <span class="org-string">'distance'</span>, <span class="org-string">'id'</span>, <span class="org-string">'var_chr'</span>, <span class="org-string">'var_start'</span>, <span class="org-string">'var_end'</span>, <span class="org-string">'df'</span>,
+             <span class="org-string">'dummy'</span>, <span class="org-string">'a'</span>, <span class="org-string">'b'</span>, <span class="org-string">'p_nominal'</span>, <span class="org-string">'beta'</span>, <span class="org-string">'p_empirical'</span>, <span class="org-string">'p_beta'</span>]
+          )})
+          .sort_values(<span class="org-string">'p_beta'</span>))
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">mean_qtls</span> = read_qtltools_output(<span class="org-string">'mean'</span>)
+</pre>
+</div>
+
+<p>
+Apply the Benjamini-Hochberg procedure:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-keyword">def</span> <span class="org-function-name">bh</span>(df):
+  <span class="org-keyword">return</span> df[<span class="org-string">'p_beta'</span>] &lt; .05 * np.arange(1, df.shape[0] + 1) / df.shape[0]
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">keep_mean_qtls</span> = bh(mean_qtls)
+keep_mean_qtls.<span class="org-builtin">sum</span>()
 </pre>
 </div>
 
 <pre class="example">
-chr   start     end strand  num_vars  distance id var_chr  \
-gene
-ENSG00000079101  chr18  596989  650334      +      5663   -596989  T   chr18
-ENSG00000023191  chr11  494513  507300      -      4391    494513  G   chr11
-ENSG00000177951  chr11  167785  207428      -      3537    167785  A   chr11
-ENSG00000177697  chr11  832844  839831      +      5570   -832844  A   chr11
-ENSG00000147364   chr8  356429  421225      +      6388   -356429  T    chr8
+38
 
-var_start  var_end             p      beta  top
-gene
-ENSG00000079101    1127932        0  1.743600e-09 -1.552050    1
-ENSG00000023191     296256        0  1.174030e-08  0.589488    1
-ENSG00000177951     436759        0  2.953120e-07  1.175580    1
-ENSG00000177697     436759        0  7.761760e-07  1.124540    1
-ENSG00000147364    1086162        0  7.801650e-07  0.816134    1
 </pre>
 
-<p>
-<b>TODO:</b> Permutation testing within QTLtools? lfsr estimation by <code>ashr</code>?
-</p>
+<div class="org-src-container">
+<pre class="src src-ipython">mean_qtls[keep_mean_qtls].merge(gene_info, left_on=<span class="org-string">'gene'</span>, right_index=<span class="org-constant">True</span>)[[<span class="org-string">'gene'</span>, <span class="org-string">'name'</span>, <span class="org-string">'id'</span>, <span class="org-string">'beta'</span>]]
+</pre>
+</div>
+
+<pre class="example">
+gene      name           id      beta
+25  ENSG00000136261      BZW2  rs140111609  0.227449
+43  ENSG00000117450     PRDX1   rs11804735 -0.126839
+12  ENSG00000145425     RPS3A  rs190232629 -0.221464
+31  ENSG00000101003     GINS1  rs117553461 -0.140865
+60  ENSG00000133884      DPF2  rs116180923 -0.900257
+23  ENSG00000145604      SKP2   rs10063618 -0.659058
+32  ENSG00000163002     NUP35   rs13413923 -0.274542
+3   ENSG00000132507     EIF5A   rs28636077 -0.347542
+0   ENSG00000188157      AGRN     rs874516  0.168831
+2   ENSG00000165323      FAT3   rs11019873  0.255744
+54  ENSG00000149636      DSN1   rs75741568 -1.150730
+12  ENSG00000138160     KIF11  rs111760303 -0.418371
+3   ENSG00000166002     SMCO4     rs540043  0.384011
+36  ENSG00000116791      CRYZ   rs10874274 -0.165072
+17  ENSG00000084207     GSTP1   rs12417429 -0.273355
+31  ENSG00000167196    FBXO22   rs58829645 -0.456229
+17  ENSG00000067704     IARS2  rs115202936 -0.367875
+34  ENSG00000066777   ARFGEF1  rs145007895 -0.161004
+15  ENSG00000168291      PDHB  rs111481898 -0.196634
+45  ENSG00000153006  SREK1IP1    rs3756739 -0.214313
+25  ENSG00000144021     CIAO1    rs7574488  0.150849
+33  ENSG00000133112      TPT1   rs11617385 -0.173633
+53  ENSG00000073921    PICALM   rs17212187  0.165206
+33  ENSG00000151725     CENPU     rs873687  0.208376
+27  ENSG00000125450     NUP85    rs7216538 -0.181640
+33  ENSG00000148840     PPRC1  rs148910219  0.321625
+24  ENSG00000114030     KPNA1  rs147664334 -0.174767
+48  ENSG00000173660     UQCRH    rs2218190  0.178463
+3   ENSG00000258289    CHURC1       rs8943 -0.140380
+32  ENSG00000135624      CCT7  rs116556222 -0.241669
+4   ENSG00000106853     PTGR1    rs7028222 -0.292905
+14  ENSG00000109919     MTCH2  rs115350026 -0.202665
+20  ENSG00000214941    ZSWIM7   rs61374610  0.360604
+14  ENSG00000131469     RPL27     rs691997 -0.174106
+18  ENSG00000083642     PDS5B    rs1327981 -0.103286
+4   ENSG00000064419     TNPO3   rs61391940 -0.390882
+27  ENSG00000131116    ZNF428  rs114451375 -0.623583
+13  ENSG00000178057   NDUFAF3   rs75311503 -0.241160
+</pre>
 </div>
 </div>
 
 <div id="outline-container-org018b84e" class="outline-2">
 <h2 id="org018b84e">Dispersion-QTL calling</h2>
 <div class="outline-text-2" id="text-org018b84e">
+<p>
+Read the estimated parameters and mean-impute missing values.
+</p>
+
 <div class="org-src-container">
 <pre class="src src-ipython"><span class="org-variable-name">disp</span> = (pd.read_table(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/dispersion.txt.gz'</span>, sep=<span class="org-string">' '</span>, index_col=0)
-        .rename(columns=<span class="org-keyword">lambda</span> x: x[2:] <span class="org-keyword">if</span> x.startswith(<span class="org-string">'NA'</span>) <span class="org-keyword">else</span> x))
-disp.head()
+        .transform(<span class="org-keyword">lambda</span> x: x - x.mean(), axis=1)
+        .fillna(0))
 </pre>
 </div>
-
-<pre class="example">
-18489      18498     18499      18501     18502  \
-gene
-ENSG00000000003   1.167245   1.706873  1.599450   1.408319  1.711105
-ENSG00000000005  10.335133  10.322262  9.905348   9.639630  9.502019
-ENSG00000000419   2.515978   3.487238  2.140802   1.586118  2.195697
-ENSG00000000457  10.371654  10.217912  9.560677  10.536921  9.979990
-ENSG00000000460   9.115197   9.561979  9.006826   8.728274  8.700228
-
-18505      18507      18508      18519     18520  \
-gene
-ENSG00000000003  2.077771   1.193537   1.548394   1.833913  1.753378
-ENSG00000000005  9.582265  10.065374  10.365082  10.301587  9.595152
-ENSG00000000419  3.818562   1.306487   1.470760   1.536752  2.150593
-ENSG00000000457  9.621971   9.546401  10.254088  10.192816  9.819939
-ENSG00000000460  8.882592   8.865636   9.414287   8.887925  9.314652
-
-...        19119      19128     19153      19159  \
-gene               ...
-ENSG00000000003    ...     1.325692   0.747701  1.708594   1.236187
-ENSG00000000005    ...     8.796814  10.149561  9.674639  10.224201
-ENSG00000000419    ...     3.763241   1.062397  1.820775   8.463470
-ENSG00000000457    ...     8.593268   9.501520  9.566214  10.446822
-ENSG00000000460    ...     7.901440   8.161574  8.895837   9.729097
-
-19190      19193      19203      19207     19210  \
-gene
-ENSG00000000003   1.769961   1.417471   2.819164   1.286686  1.484697
-ENSG00000000005   9.807590   9.849161  10.167520  10.156749  9.744061
-ENSG00000000419   1.816306   1.169699   8.482072   1.614174  1.811550
-ENSG00000000457  10.278067  10.191409   9.601987   9.680202  9.291765
-ENSG00000000460   9.537437   8.882127  10.174777   9.343502  8.246989
-
-19257
-gene
-ENSG00000000003  1.418264
-ENSG00000000005  9.928991
-ENSG00000000419  1.382229
-ENSG00000000457  9.178885
-ENSG00000000460  8.454962
-
-[5 rows x 32 columns]
-</pre>
 
 <div class="org-src-container">
 <pre class="src src-ipython">write_pheno_file(disp, gene_info, <span class="org-string">'/scratch/midway2/aksarkar/singlecell/disp.bed'</span>)
@@ -486,107 +484,116 @@ ENSG00000000460  8.454962
 </div>
 
 <p>
-Index the phenotype file
+Index the phenotype file.
 </p>
 
 <pre class="example">
-Submitted batch job 42160151
+Submitted batch job 42224399
 
 </pre>
 
 <p>
-Run <code>qtltools</code>
+Run <code>qtltools</code>.
 </p>
 
 <pre class="example">
-Submitted batch job 42160171
+Submitted batch job 42224403
+
+</pre>
+
+<p>
+Read the output.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">disp_qtls</span> = read_qtltools_output(<span class="org-string">'disp'</span>)
+<span class="org-variable-name">keep_disp_qtls</span> = bh(disp_qtls)
+keep_disp_qtls.<span class="org-builtin">sum</span>()
+</pre>
+</div>
+
+<pre class="example">
+272
 
 </pre>
 
 <div class="org-src-container">
-<pre class="src src-ipython"><span class="org-variable-name">file_names</span> = [<span class="org-string">'disp-qtl.{}.txt'</span>.<span class="org-builtin">format</span>(i) <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-builtin">range</span>(1, 101)]
-<span class="org-variable-name">disp_qtls</span> = (pd.concat([pd.read_table(f, header=<span class="org-constant">None</span>, sep=<span class="org-string">' '</span>) <span class="org-keyword">for</span> f <span class="org-keyword">in</span> file_names <span class="org-keyword">if</span> os.path.exists(f) <span class="org-keyword">and</span> os.path.getsize(f) &gt; 0])
-             .rename(columns={i: x <span class="org-keyword">for</span> i, x <span class="org-keyword">in</span> <span class="org-builtin">enumerate</span>([<span class="org-string">'gene'</span>, <span class="org-string">'chr'</span>, <span class="org-string">'start'</span>, <span class="org-string">'end'</span>, <span class="org-string">'strand'</span>, <span class="org-string">'num_vars'</span>, <span class="org-string">'distance'</span>, <span class="org-string">'id'</span>, <span class="org-string">'var_chr'</span>, <span class="org-string">'var_start'</span>, <span class="org-string">'var_end'</span>, <span class="org-string">'p'</span>, <span class="org-string">'beta'</span>, <span class="org-string">'top'</span>])})
-             .sort_values(<span class="org-string">'p'</span>)
-             .set_index(<span class="org-string">'gene'</span>))
-disp_qtls[disp_qtls[<span class="org-string">'top'</span>] == 1].head()
+<pre class="src src-ipython">disp_qtls[keep_disp_qtls].merge(gene_info, left_on=<span class="org-string">'gene'</span>, right_index=<span class="org-constant">True</span>)[[<span class="org-string">'gene'</span>, <span class="org-string">'name'</span>, <span class="org-string">'id'</span>, <span class="org-string">'beta'</span>]]
 </pre>
 </div>
 
 <pre class="example">
-chr   start     end strand  num_vars  distance id var_chr  \
-gene
-ENSG00000169026   chr4  675619  683230      -      4952    675619  A    chr4
-ENSG00000187583   chr1  901878  911245      +      4140   -901878  A    chr1
-ENSG00000142082  chr11  215459  236931      -      3636    215459  G   chr11
-ENSG00000172748   chr8  182138  197342      +      5320   -182138  G    chr8
-ENSG00000255284  chr11  777579  784297      +      5412   -777579  A   chr11
+gene     name           id      beta
+25  ENSG00000144021    CIAO1    rs6576968 -2.179330
+8   ENSG00000135452  TSPAN31   rs77404502 -1.932670
+29  ENSG00000164091    WDR82  rs187262136 -2.598320
+6   ENSG00000141424  SLC39A6   rs73946540 -2.261380
+51  ENSG00000171222   SCAND1    rs1016119 -1.687190
+37  ENSG00000138376    BARD1   rs73987780 -1.617330
+51  ENSG00000004059     ARF5   rs17151764 -2.129170
+53  ENSG00000118707    TGIF2    rs1016119 -1.712900
+15  ENSG00000164609     SLU7   rs10043577 -1.096140
+33  ENSG00000066557   LRRC40   rs74088042 -2.334990
+54  ENSG00000185480   PARPBP   rs58068508 -2.780630
+15  ENSG00000109920    FNBP4   rs59387718 -2.648590
+33  ENSG00000138772    ANXA3   rs75375424 -1.059610
+26  ENSG00000184635    ZNF93   rs28716621 -2.259500
+13  ENSG00000175482    POLD4   rs56024650 -2.117870
+13  ENSG00000170340   B3GNT2   rs56323905 -1.277470
+40  ENSG00000146007    ZMAT2   rs10054866 -1.993640
+32  ENSG00000166170     BAG5   rs12434482 -2.275930
+4   ENSG00000186522   SEPT10  rs144296225 -1.748870
+0   ENSG00000101363   MANBAL    rs1016118 -0.985626
+30  ENSG00000103978  TMEM87A   rs78904754 -2.319650
+6   ENSG00000066427    ATXN3    rs1242106 -2.221900
+27  ENSG00000198937  CCDC167   rs73730514 -2.193340
+21  ENSG00000148110   HIATL1    rs4744369  2.125840
+27  ENSG00000136877     FPGS   rs73597648 -2.087080
+25  ENSG00000160746    ANO10    rs4683341 -1.837390
+19  ENSG00000183765    CHEK2   rs73884718 -2.924060
+30  ENSG00000067715     SYT1   rs73348571 -2.192070
+12  ENSG00000173120    KDM2A   rs56024650 -2.002090
+6   ENSG00000141101     NOB1   rs78351259 -2.816820
+..              ...      ...          ...       ...
+5   ENSG00000142453    CARM1  rs138669253 -2.210060
+11  ENSG00000198589     LRBA    rs4634199 -2.421930
+9   ENSG00000163110   PDLIM5   rs58160026 -2.712250
+3   ENSG00000151914      DST   rs73465854 -2.833670
+23  ENSG00000002549     LAP3   rs16897012 -2.385300
+6   ENSG00000166986     MARS    rs7314055  1.810380
+22  ENSG00000084072     PPIE   rs74068312 -3.203480
+11  ENSG00000160563    MED27   rs73656076 -1.097330
+23  ENSG00000196712      NF1   rs56007276 -1.638780
+3   ENSG00000166002    SMCO4   rs78158365 -1.388070
+21  ENSG00000136718     IMP4  rs191999716 -2.829290
+17  ENSG00000170776   AKAP13   rs74026965 -2.922720
+0   ENSG00000106344    RBM28   rs17151764 -2.801920
+28  ENSG00000164649   CDCA7L   rs10228440 -3.184560
+15  ENSG00000137074     APTX   rs60613686 -1.166230
+39  ENSG00000164056    SPRY1   rs73844902 -2.014020
+31  ENSG00000083635   NUFIP1   rs56990928 -2.885260
+32  ENSG00000072210  ALDH3A2  rs182761344 -3.035750
+41  ENSG00000121481     RNF2  rs150422536 -1.930980
+25  ENSG00000175455   CCDC14   rs73856609 -3.025660
+11  ENSG00000105583  WDR83OS   rs10424512 -3.486530
+16  ENSG00000082212      ME2   rs73957415 -2.878130
+49  ENSG00000101191    DIDO1   rs73329169 -2.135160
+31  ENSG00000108641     B9D1  rs115486569 -0.827363
+18  ENSG00000075239    ACAT1    rs3218693 -1.929570
+38  ENSG00000125977   EIF2S2    rs6059360 -2.027010
+15  ENSG00000099977      DDT   rs34068078 -2.732090
+17  ENSG00000167258    CDK12   rs60082381 -1.743680
+4   ENSG00000204977   TRIM13     rs516065  2.497280
+41  ENSG00000036549     ZZZ3   rs74093219 -1.577240
 
-var_start  var_end             p     beta  top
-gene
-ENSG00000169026     550716        0  2.262070e-18 -6.27400    1
-ENSG00000187583    1658302        0  6.812100e-18 -7.00223    1
-ENSG00000142082     865448        0  6.317700e-17  3.68775    1
-ENSG00000172748     229562        0  9.070000e-16 -6.24766    1
-ENSG00000255284     600513        0  2.076950e-15 -6.11760    1
+[272 rows x 4 columns]
 </pre>
-
-<div class="org-src-container">
-<pre class="src src-ipython">disp_qtls.shape[0]
-</pre>
-</div>
-
-<pre class="example">
-9720
-
-</pre>
-</div>
-</div>
-<div id="outline-container-orga4d85dd" class="outline-2">
-<h2 id="orga4d85dd">Next steps</h2>
-<div class="outline-text-2" id="text-orga4d85dd">
-<ol class="org-ol">
-<li><p>
-We previously used half-sibling regression (<a href="https://www.pnas.org/cgi/doi/10.1073/pnas.1511656113">Scholkopf et al 2016</a>) to correct
-confounders for bulk RNA-Seq in GTEx (<a href="http://dx.doi.org/10.1101/107623">Park et al 2017</a>).
-</p>
-
-<p>
-The key idea is that the only ways we could predict the expression of a
-gene of interest using genes on other chromosomes are (1) true
-<i>trans</i>-regulation and (2) shared confounding. For <i>cis</i>-QTL mapping, we
-want to eliminate both of these, which we can do by simply regressing out
-gene expression of all genes on all other chromosomes.
-</p>
-
-<p>
-One open question is whether we should correct counts (which would be
-required to solve issue (3)), or correct per-individual means/variances.
-</p></li>
-
-<li><p>
-We previously built an <a href="https://github.com/YPARK/fqtl">inference engine which supports negative binomial
-models</a> which could be easily extended to zero-inflated negative binomial
-models.
-</p>
-
-<p>
-In our experiments directly using the negative binomial likelihood
-outperformed the Gaussian model (following the <code>voom</code>-transform, but
-sharing the mean model parameters in the dispersion model).
-</p>
-
-<p>
-This would allow us to solve issues (2) and (3), and potentially make (4)
-easier.
-</p></li>
-</ol>
 </div>
 </div>
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2018-01-16 Tue 14:09</p>
+<p class="date">Created: 2018-01-17 Wed 16:41</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>
