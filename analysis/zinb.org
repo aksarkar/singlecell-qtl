@@ -199,7 +199,14 @@
 
   \[ u_{ijk} \sim \text{Gamma}(\phi_{ik}^{-1}, \phi_{ik}^{-1}) \]
 
-  Marginalizing out \(u\) yields a distribution with the following properties:
+  *Open question: does the size factor have to enter the QTL model also?*
+
+  Marginalizing out \(u\) yields the negative binomial distribution, with log
+  likelihood:
+
+  \[ \ln p(r_{ijk} \mid R_{ij}, \mu_{ik}, \phi_{ik}) = r_{ijk} \ln\left(\frac{R_{ij}\mu_{ik}\phi_{ik}}{1 + R_{ij}\mu_{ik}\phi_{ik}}\right) - \phi_{ik}^{-1} \ln(1 + R_{ij}\mu_{ik}\phi_{ik}) + \ln \Gamma(r_{ijk} + \phi_{ik}^{-1}) - \ln \Gamma(r_{ijk} + 1) - \ln \Gamma(\phi^{-1}) \]
+
+  This distribution has the following properties:
 
   \[ E[r_{ijk} \mid \cdot] = R_{ij} \mu_{ik} \]
 
@@ -213,10 +220,6 @@
   \[ V[r] = E[R \mu u] + V[R \mu u] \]
   \[ V[r] = R \mu + (R \mu)^2 V[u] \]
   \[ V[r] = R \mu + (R \mu)^2 \phi \]
-
-  The log likelihood is:
-
-  \[ \ln p(r_{ijk} \mid R_{ij}, \mu_{ik}, \phi_{ik}) = r_{ijk} \ln\left(\frac{R_{ij}\mu_{ik}\phi_{ik}}{1 + R_{ij}\mu_{ik}\phi_{ik}}\right) - \phi_{ik}^{-1} \ln(1 + R_{ij}\mu_{ik}\phi_{ik}) + \ln \Gamma(r_{ijk} + \phi_{ik}^{-1}) - \ln \Gamma(r_{ijk} + 1) - \ln \Gamma(\phi^{-1}) \]
 
   We have multiple data points (30-200 cells) per mean/dispersion parameter, so
   simply minimizing the negative log likelihood should give reasonable
