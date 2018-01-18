@@ -355,7 +355,7 @@
   #+RESULTS:
   : Submitted batch job 42221597
 
-* Parallel algorithm
+* Parallel algorithm                                               :noexport:
 
   We should be able to jointly optimize all of the parameters together, using
   one-hot encoding to map parameters to data points. This will speed up

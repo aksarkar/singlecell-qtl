@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2018-01-17 Wed 16:39 -->
+<!-- 2018-01-18 Thu 10:54 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mean/dispersion estimation</title>
@@ -262,7 +262,6 @@ for the JavaScript code in this tag.
 <li><a href="#org8fd5c16">Read the data</a></li>
 <li><a href="#org8aa5dec">Model specification</a></li>
 <li><a href="#org43c9fea">Serial algorithm</a></li>
-<li><a href="#orgcb0c7cd">Parallel algorithm</a></li>
 </ul>
 </div>
 </div>
@@ -403,7 +402,20 @@ mixture:
 </p>
 
 <p>
-Marginalizing out \(u\) yields a distribution with the following properties:
+<b>Open question: does the size factor have to enter the QTL model also?</b>
+</p>
+
+<p>
+Marginalizing out \(u\) yields the negative binomial distribution, with log
+likelihood:
+</p>
+
+<p>
+\[ \ln p(r_{ijk} \mid R_{ij}, \mu_{ik}, \phi_{ik}) = r_{ijk} \ln\left(\frac{R_{ij}\mu_{ik}\phi_{ik}}{1 + R_{ij}\mu_{ik}\phi_{ik}}\right) - \phi_{ik}^{-1} \ln(1 + R_{ij}\mu_{ik}\phi_{ik}) + \ln \Gamma(r_{ijk} + \phi_{ik}^{-1}) - \ln \Gamma(r_{ijk} + 1) - \ln \Gamma(\phi^{-1}) \]
+</p>
+
+<p>
+This distribution has the following properties:
 </p>
 
 <p>
@@ -425,14 +437,6 @@ convenience:
 \[ V[r] = E[R \mu u] + V[R \mu u] \]
 \[ V[r] = R \mu + (R \mu)^2 V[u] \]
 \[ V[r] = R \mu + (R \mu)^2 \phi \]
-</p>
-
-<p>
-The log likelihood is:
-</p>
-
-<p>
-\[ \ln p(r_{ijk} \mid R_{ij}, \mu_{ik}, \phi_{ik}) = r_{ijk} \ln\left(\frac{R_{ij}\mu_{ik}\phi_{ik}}{1 + R_{ij}\mu_{ik}\phi_{ik}}\right) - \phi_{ik}^{-1} \ln(1 + R_{ij}\mu_{ik}\phi_{ik}) + \ln \Gamma(r_{ijk} + \phi_{ik}^{-1}) - \ln \Gamma(r_{ijk} + 1) - \ln \Gamma(\phi^{-1}) \]
 </p>
 
 <p>
@@ -571,210 +575,10 @@ python nb.py
 </div>
 </div>
 </div>
-
-<div id="outline-container-orgcb0c7cd" class="outline-2">
-<h2 id="orgcb0c7cd">Parallel algorithm</h2>
-<div class="outline-text-2" id="text-orgcb0c7cd">
-<p>
-We should be able to jointly optimize all of the parameters together, using
-one-hot encoding to map parameters to data points. This will speed up
-inference by making it more amenable to running on the GPU.
-</p>
-
-<p>
-Use tensorflow to automatically differentiate the negative log likelihood and
-perform gradient descent.
-</p>
-
-<p>
-<b>Open problem: this doesn't give the same answer as the serial algorithm</b>
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span class="org-keyword">def</span> <span class="org-function-name">sigmoid</span>(x):
-  <span class="org-doc">"""Numerically safe sigmoid"""</span>
-  <span class="org-keyword">return</span> tf.clip_by_value(tf.sigmoid(x), -13, 13)
-
-<span class="org-keyword">def</span> <span class="org-function-name">log</span>(x):
-  <span class="org-doc">"""Numerically safe log"""</span>
-  <span class="org-keyword">return</span> tf.log(x + 1e-8)
-
-<span class="org-keyword">def</span> <span class="org-function-name">nb_llik</span>(x, mean, inv_disp):
-  <span class="org-doc">"""Log likelihood of x distributed as NB</span>
-
-<span class="org-doc">  See Hilbe 2012, eq. 8.10</span>
-
-<span class="org-doc">  mean - mean (&gt; 0)</span>
-<span class="org-doc">  inv_disp - inverse dispersion (&gt; 0)</span>
-
-<span class="org-doc">  """</span>
-  <span class="org-keyword">return</span> (x * log(mean / inv_disp) -
-          x * log(1 + mean / inv_disp) -
-          inv_disp * log(1 + mean / inv_disp) +
-          tf.lgamma(x + inv_disp) -
-          tf.lgamma(inv_disp) -
-          tf.lgamma(x + 1))
-
-<span class="org-keyword">def</span> <span class="org-function-name">zinb_llik</span>(x, mean, inv_disp, logodds, eps=1e-8):
-  <span class="org-doc">"""Log likelihood of x distributed as ZINB</span>
-
-<span class="org-doc">  See Hilbe 2012, eq. 11.12, 11.13</span>
-
-<span class="org-doc">  mean - mean (&gt; 0)</span>
-<span class="org-doc">  inv_disp - inverse dispersion (&gt; 0)</span>
-<span class="org-doc">  logodds - dropout log odds</span>
-
-<span class="org-doc">  """</span>
-  <span class="org-variable-name">case_zero</span> = -log(sigmoid(-logodds) + sigmoid(logodds) * tf.exp(nb_llik(x, mean, inv_disp)))
-  <span class="org-variable-name">case_non_zero</span> = -tf.nn.softplus(logodds) + nb_llik(x, mean, inv_disp)
-  <span class="org-keyword">return</span> tf.where(tf.less(x, 1e-8), case_zero, case_non_zero)
-
-<span class="org-keyword">def</span> <span class="org-function-name">fit</span>(umi, onehot, size_factor, zero_inflation=<span class="org-constant">False</span>, learning_rate=1e-2, max_epochs=1000):
-  <span class="org-doc">"""Return estimated log mean and log dispersion. </span>
-
-<span class="org-doc">  If fitting a zero-inflated model, additionally return dropout log odds.</span>
-
-<span class="org-doc">  umi - count matrix (n x p; float32)</span>
-<span class="org-doc">  onehot - mapping of individuals to cells (m x n; float32)</span>
-<span class="org-doc">  size_factor - size factor vector (n x 1; float32)</span>
-
-<span class="org-doc">  Returns:</span>
-
-<span class="org-doc">  log_mean - log mean parameter (m x p)</span>
-<span class="org-doc">  log_disp - log dispersion parameter (m x p)</span>
-<span class="org-doc">  dropout - if zero_inflation, dropout log odds (n x 1)</span>
-
-<span class="org-doc">  """</span>
-  <span class="org-variable-name">n</span>, <span class="org-variable-name">p</span> = umi.shape
-  <span class="org-variable-name">_</span>, <span class="org-variable-name">m</span> = onehot.shape
-
-  <span class="org-variable-name">graph</span> = tf.Graph()
-  <span class="org-keyword">with</span> graph.as_default(), graph.device(<span class="org-string">'/gpu:*'</span>):
-    <span class="org-variable-name">size_factor</span> = tf.Variable(size_factor, trainable=<span class="org-constant">False</span>)
-    <span class="org-variable-name">umi</span> = tf.Variable(umi, trainable=<span class="org-constant">False</span>)
-    <span class="org-variable-name">onehot</span> = tf.Variable(onehot, trainable=<span class="org-constant">False</span>)
-
-    <span class="org-variable-name">mean</span> = tf.exp(tf.Variable(tf.zeros([m, p])))
-    <span class="org-variable-name">inv_disp</span> = tf.exp(tf.Variable(tf.zeros([m, p])))
-
-    <span class="org-keyword">if</span> zero_inflation:
-      <span class="org-variable-name">dropout</span> = tf.Variable(tf.zeros([n, 1]))
-      <span class="org-variable-name">llik</span> = tf.reduce_mean(
-        zinb_llik(umi, size_factor * tf.matmul(onehot, mean),
-                  tf.matmul(onehot, inv_disp), dropout))
-    <span class="org-keyword">else</span>:
-      <span class="org-variable-name">llik</span> = tf.reduce_sum(
-        nb_llik(umi, size_factor * tf.matmul(onehot, mean),
-                tf.matmul(onehot, inv_disp)))
-
-    <span class="org-keyword">with</span> graph.device(<span class="org-string">'/cpu:0'</span>):
-      <span class="org-variable-name">check_op</span> = tf.assert_non_positive(llik)
-
-    <span class="org-keyword">with</span> tf.control_dependencies([check_op]):
-      <span class="org-variable-name">train</span> = tf.train.RMSPropOptimizer(learning_rate=learning_rate).minimize(-llik)
-
-    <span class="org-variable-name">opt</span> = [tf.log(mean), -tf.log(inv_disp)]
-    <span class="org-keyword">if</span> zero_inflation:
-      opt.append(dropout)
-    <span class="org-variable-name">curr</span> = <span class="org-builtin">float</span>(<span class="org-string">'-inf'</span>)
-    <span class="org-keyword">with</span> tf.Session() <span class="org-keyword">as</span> sess:
-      sess.run(tf.global_variables_initializer())
-      <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-builtin">range</span>(max_epochs):
-        <span class="org-variable-name">_</span>, <span class="org-variable-name">update</span> = sess.run([train, llik])
-        <span class="org-keyword">if</span> <span class="org-keyword">not</span> np.isfinite(update):
-          <span class="org-keyword">raise</span> tf.train.NanLossDuringTrainingError
-        <span class="org-keyword">if</span> <span class="org-keyword">not</span> i % 100:
-          <span class="org-keyword">print</span>(i, update)
-      <span class="org-keyword">return</span> sess.run(opt)
-</pre>
-</div>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span class="org-variable-name">mean</span>, <span class="org-variable-name">dispersion</span> = fit(
-  umi=umi.iloc[:5].values.T.astype(np.float32),
-  onehot=onehot.values.astype(np.float32),
-  size_factor=umi.agg(np.<span class="org-builtin">sum</span>).astype(np.float32).values.reshape(-1, 1),
-  learning_rate=1e-2,
-  max_epochs=8000)
-</pre>
-</div>
-
-<div class="org-src-container">
-<pre class="src src-ipython">pd.DataFrame(mean.T, index=umi.index, columns=onehot.columns).to_csv(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/mean.txt.gz'</span>, sep=<span class="org-string">' '</span>, compression=<span class="org-string">'gzip'</span>)
-pd.DataFrame(dispersion.T, index=umi.index, columns=onehot.columns).to_csv(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/dispersion.txt.gz'</span>, sep=<span class="org-string">' '</span>, compression=<span class="org-string">'gzip'</span>)
-</pre>
-</div>
-
-<p>
-For convenience <a href="https://orgmode.org/manual/Extracting-source-code.html">tangle</a> the code from this file and run it through
-<code>sbatch</code>. (This makes it easier to keep a long running kernel for the
-followup analysis, while running the hard estimation problem on a GPU node.)
-</p>
-
-<div class="org-src-container">
-<pre class="src src-emacs-lisp">(org-babel-tangle)
-</pre>
-</div>
-
-<div class="org-src-container">
-<pre class="src src-sh">sbatch --partition=gpu2 --gres=gpu:1 --mem=16G --time=30 --job-name=zinb --output=zinb.out --error=zinb.err
-<span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/bash</span>
-<span class="org-builtin">source</span> activate scqtl
-python zinb.py
-</pre>
-</div>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span class="org-variable-name">log_mean</span> = pd.read_table(<span class="org-string">'mean.txt.gz'</span>, sep=<span class="org-string">' '</span>, index_col=0)
-</pre>
-</div>
-
-<div class="org-src-container">
-<pre class="src src-ipython">log_mean.iloc[0]
-</pre>
-</div>
-
-<pre class="example">
-NA18489   -4.398294
-NA18498   -0.912375
-NA18499   -8.331842
-NA18501   -4.439660
-NA18502   -8.615689
-NA18505   -2.217484
-NA18507   -8.427283
-NA18508   -8.501702
-NA18519   -2.994574
-NA18520   -8.178504
-NA18522   -2.792260
-NA18852   -3.843915
-NA18853   -3.828545
-NA18856   -3.346244
-NA18858   -8.192317
-NA18862   -6.147875
-NA18870   -3.389510
-NA19093   -5.520665
-NA19098   -2.783728
-NA19101   -4.907929
-NA19114   -4.064628
-NA19116   -6.399668
-NA19119   -0.846079
-NA19128   -5.853783
-NA19153   -4.680749
-NA19159   -1.396034
-NA19190   -4.761320
-NA19193   -2.739177
-NA19203   -1.009947
-NA19207   -4.496280
-NA19210   -3.107379
-NA19257   -4.354552
-Name: ENSG00000000003, dtype: float64
-</pre>
-</div>
-</div>
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2018-01-17 Wed 16:39</p>
+<p class="date">Created: 2018-01-18 Thu 10:54</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>
