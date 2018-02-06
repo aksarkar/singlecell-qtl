@@ -438,7 +438,7 @@
   #+END_SRC
 
   #+RESULTS:
-  : Submitted batch job 42897577
+  : Submitted batch job 42948607
 
   #+BEGIN_SRC ipython
     mean = pd.read_table('/scratch/midway2/aksarkar/singlecell/mean.txt.gz', sep=' ', index_col=0)
