@@ -132,7 +132,29 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[85]:
+  # Out[3]:
+  :END:
+
+  Use genes on odd chromosomes as "training" (to decide which confounders to
+  correct for, and how to correct for them), and hold out genes on even
+  chromosomes to use as validation.
+
+  #+NAME: train-test-split
+  #+BEGIN_SRC ipython
+    genes = (pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/scqtl-genes.txt.gz')
+             .set_index('gene')
+             .query('source == "H. sapiens"')
+             .query('chr != "hsX"')
+             .query('chr != "hsY"')
+             .query('chr != "hsMT"'))
+    genes = genes[genes.apply(lambda x: bool(int(x['chr'][2:]) % 2), axis=1)]
+    umi = umi.align(genes, join='inner', axis='index')[0]
+  #+END_SRC
+
+  #+RESULTS: train-test-split
+  :RESULTS:
+  # Out[16]:
+  : (5918, 4865)
   :END:
 
   Onehot-encode the samples.
@@ -148,21 +170,24 @@
 
   #+RESULTS: onehot-qc
   :RESULTS:
-  # Out[88]:
+  # Out[17]:
   : (4865, 54)
   :END:
 
   Check that one-hot encoding is OK:
 
   #+BEGIN_SRC ipython
-    (umi.loc['ENSG00000000003', (annotations['chip_id'] == 'NA18489').values] == 
-     umi.loc['ENSG00000000003', onehot.dot(np.eye(onehot.shape[1])[0]).astype(bool)]).all()
+    for _ in range(100):
+      gene = np.random.choice(umi.index)
+      ind = np.random.choice(individuals)
+      idx = individuals.index(ind)
+      assert (umi.loc[gene, (annotations['chip_id'] == ind).values] == 
+              umi.loc[gene, onehot.dot(np.eye(onehot.shape[1])[idx]).astype(bool)]).all()
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[89]:
-  : True
+  # Out[19]:
   :END:
 
 * Serial algorithm
