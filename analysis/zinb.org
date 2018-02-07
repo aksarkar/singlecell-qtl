@@ -1,5 +1,6 @@
 #+TITLE: Mean/dispersion estimation
 #+SETUPFILE: setup.org
+#+OPTIONS: toc:nil
 
 * Introduction
 
@@ -16,81 +17,6 @@
   2. [[*Visualize the fitted models][We develop visual diagnostics]] of the fitted models to check goodness of fit
   3. [[*Compare NB to ZINB][We implement parameter estimation assuming dropout]] parameters per cell and
      per gene
-
-* Setup                                                            :noexport:
-
-  #+BEGIN_SRC emacs-lisp
-    (org-babel-lob-ingest "/home/aksarkar/projects/singlecell-qtl/analysis/dim-reduction.org")
-    (org-babel-lob-ingest "/home/aksarkar/.emacs.d/org-templates/library.org")
-  #+END_SRC
-
-  #+RESULTS:
-  : 1
-
-  #+CALL: ipython3(memory="16G",venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
-
-  #+RESULTS:
-  : Submitted batch job 42406554
-
-  #+NAME: zinb-imports
-  #+BEGIN_SRC ipython
-    import functools
-    import numpy as np
-    import pandas as pd
-    import scipy.stats as st
-  #+END_SRC
-
-  #+RESULTS: zinb-imports
-  :RESULTS:
-  # Out[1]:
-  :END:
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[1]:
-  :END:
-
-  #+NAME: plt-imports
-  #+BEGIN_SRC ipython
-    %matplotlib inline
-    import colorcet
-    import matplotlib.pyplot as plt
-  #+END_SRC
-
-  #+RESULTS: plt-imports
-  :RESULTS:
-  # Out[2]:
-  :END:
-
-  #+NAME: tf-imports
-  #+BEGIN_SRC ipython
-    import tensorflow as tf
-  #+END_SRC
-
-  #+NAME: list-local-devices
-  #+BEGIN_SRC ipython
-    from tensorflow.python.client import device_lib as dl
-    dl.list_local_devices()
-  #+END_SRC
-
-  #+RESULTS: list-local-devices
-  :RESULTS:
-  #+BEGIN_EXAMPLE
-  [name: "/cpu:0"
-     device_type: "CPU"
-     memory_limit: 268435456
-     locality {
-     }
-     incarnation: 3101117888233869158, name: "/gpu:0"
-     device_type: "GPU"
-     memory_limit: 11324823962
-     locality {
-       bus_id: 1
-     }
-     incarnation: 4298943332142850272
-     physical_device_desc: "device: 0, name: Tesla K80, pci bus id: 0000:08:00.0"]
-  #+END_EXAMPLE
-  :END:
 
 * Model specification
 
@@ -127,6 +53,76 @@
   \exp(\ln p(r_{ijk} \mid R_{ij}, \mu_{ik}, \phi_{ik}))) \]
 
   \[ \ln p(r_{ijk} \mid r_{ijk} > 0, \cdot) = \ln(1 - \pi_{ijk}) + \ln p(r_{ijk} \mid R_{ij}, \mu_{ik}, \phi_{ik})) \]
+
+* Setup                                                            :noexport:
+
+  #+BEGIN_SRC emacs-lisp
+    (org-babel-lob-ingest "/home/aksarkar/projects/singlecell-qtl/analysis/dim-reduction.org")
+    (org-babel-lob-ingest "/home/aksarkar/.emacs.d/org-templates/library.org")
+  #+END_SRC
+
+  #+RESULTS:
+  : 1
+
+  #+CALL: ipython3(memory="16G",venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
+
+  #+RESULTS:
+  : Submitted batch job 42995619
+
+  #+NAME: zinb-imports
+  #+BEGIN_SRC ipython
+    import functools
+    import numpy as np
+    import pandas as pd
+    import scipy.stats as st
+  #+END_SRC
+
+  #+RESULTS: zinb-imports
+  :RESULTS:
+  # Out[1]:
+  :END:
+
+  #+NAME: plt-imports
+  #+BEGIN_SRC ipython
+    %matplotlib inline
+    import colorcet
+    import matplotlib.pyplot as plt
+  #+END_SRC
+
+  #+RESULTS: plt-imports
+  :RESULTS:
+  # Out[2]:
+  :END:
+
+  #+NAME: tf-imports
+  #+BEGIN_SRC ipython :eval never
+    import tensorflow as tf
+  #+END_SRC
+
+  #+NAME: list-local-devices
+  #+BEGIN_SRC ipython :eval never
+    from tensorflow.python.client import device_lib as dl
+    dl.list_local_devices()
+  #+END_SRC
+
+  #+RESULTS: list-local-devices
+  :RESULTS:
+  #+BEGIN_EXAMPLE
+  [name: "/cpu:0"
+     device_type: "CPU"
+     memory_limit: 268435456
+     locality {
+     }
+     incarnation: 3101117888233869158, name: "/gpu:0"
+     device_type: "GPU"
+     memory_limit: 11324823962
+     locality {
+       bus_id: 1
+     }
+     incarnation: 4298943332142850272
+     physical_device_desc: "device: 0, name: Tesla K80, pci bus id: 0000:08:00.0"]
+  #+END_EXAMPLE
+  :END:
 
 * Read the data
 
