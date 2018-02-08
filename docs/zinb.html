@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2018-02-05 Mon 11:08 -->
+<!-- 2018-02-07 Wed 18:09 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mean/dispersion estimation</title>
@@ -253,20 +253,6 @@ for the JavaScript code in this tag.
 <body>
 <div id="content">
 <h1 class="title">Mean/dispersion estimation</h1>
-<div id="table-of-contents">
-<h2>Table of Contents</h2>
-<div id="text-table-of-contents">
-<ul>
-<li><a href="#org6af1f01">Introduction</a></li>
-<li><a href="#orgad32fb3">Model specification</a></li>
-<li><a href="#orgde19fe3">Read the data</a></li>
-<li><a href="#org978d4fc">Serial algorithm</a></li>
-<li><a href="#org21f6e33">Parallel algorithm</a></li>
-<li><a href="#org7363c08">Visualize the fitted models</a></li>
-<li><a href="#org9ee0e04">Compare NB to ZINB</a></li>
-</ul>
-</div>
-</div>
 
 <div id="outline-container-org6af1f01" class="outline-2">
 <h2 id="org6af1f01">Introduction</h2>
@@ -364,6 +350,29 @@ Read the QC'ed data.
 </p>
 
 <p>
+Use genes on odd chromosomes as "training" (to decide which confounders to
+correct for, and how to correct for them), and hold out genes on even
+chromosomes to use as validation.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython" id="orgeccb118"><span class="org-variable-name">genes</span> = (pd.read_table(<span class="org-string">'/home/aksarkar/projects/singlecell-qtl/data/scqtl-genes.txt.gz'</span>)
+         .set_index(<span class="org-string">'gene'</span>)
+         .query(<span class="org-string">'source == "H. sapiens"'</span>)
+         .query(<span class="org-string">'chr != "hsX"'</span>)
+         .query(<span class="org-string">'chr != "hsY"'</span>)
+         .query(<span class="org-string">'chr != "hsMT"'</span>))
+<span class="org-variable-name">genes</span> = genes[genes.<span class="org-builtin">apply</span>(<span class="org-keyword">lambda</span> x: <span class="org-builtin">bool</span>(<span class="org-builtin">int</span>(x[<span class="org-string">'chr'</span>][2:]) % 2), axis=1)]
+<span class="org-variable-name">umi</span> = umi.align(genes, join=<span class="org-string">'inner'</span>, axis=<span class="org-string">'index'</span>)[0]
+</pre>
+</div>
+
+<pre class="example">
+(5918, 4865)
+
+</pre>
+
+<p>
 Onehot-encode the samples.
 </p>
 
@@ -386,15 +395,14 @@ Check that one-hot encoding is OK:
 </p>
 
 <div class="org-src-container">
-<pre class="src src-ipython">(umi.loc[<span class="org-string">'ENSG00000000003'</span>, (annotations[<span class="org-string">'chip_id'</span>] == <span class="org-string">'NA18489'</span>).values] == 
- umi.loc[<span class="org-string">'ENSG00000000003'</span>, onehot.dot(np.eye(onehot.shape[1])[0]).astype(<span class="org-builtin">bool</span>)]).<span class="org-builtin">all</span>()
+<pre class="src src-ipython"><span class="org-keyword">for</span> _ <span class="org-keyword">in</span> <span class="org-builtin">range</span>(100):
+  <span class="org-variable-name">gene</span> = np.random.choice(umi.index)
+  <span class="org-variable-name">ind</span> = np.random.choice(individuals)
+  <span class="org-variable-name">idx</span> = individuals.index(ind)
+  <span class="org-keyword">assert</span> (umi.loc[gene, (annotations[<span class="org-string">'chip_id'</span>] == ind).values] == 
+          umi.loc[gene, onehot.dot(np.eye(onehot.shape[1])[idx]).astype(<span class="org-builtin">bool</span>)]).<span class="org-builtin">all</span>()
 </pre>
 </div>
-
-<pre class="example">
-True
-
-</pre>
 </div>
 </div>
 
@@ -473,8 +481,8 @@ ENSG00000000003 -8.223728 -8.609513 -8.406216 -8.339645 -8.479335
 
 <div class="org-src-container">
 <pre class="src src-ipython"><span class="org-variable-name">f</span> = functools.partial(process_chunk, size=umi.agg(np.<span class="org-builtin">sum</span>))
-<span class="org-keyword">with</span> mp.Pool() <span class="org-keyword">as</span> pool:
-  <span class="org-variable-name">result</span> = pd.concat(pool.<span class="org-builtin">map</span>(f, np.array_split(umi, 100)))
+<span class="org-keyword">with</span> mp.Pool(maxtasksperchild=10) <span class="org-keyword">as</span> pool:
+  <span class="org-variable-name">result</span> = pd.concat(pool.<span class="org-builtin">map</span>(f, np.array_split(umi, 1000)))
 
 <span class="org-variable-name">log_mean</span> = result.pivot(columns=<span class="org-string">'individual'</span>, values=<span class="org-string">'mean'</span>)
 <span class="org-variable-name">log_disp</span> = result.pivot(columns=<span class="org-string">'individual'</span>, values=<span class="org-string">'dispersion'</span>) 
@@ -503,17 +511,18 @@ perform gradient descent.
 </p>
 
 <div class="org-src-container">
-<pre class="src src-ipython"><span class="org-variable-name">mean</span>, <span class="org-variable-name">dispersion</span> = fit(
+<pre class="src src-ipython">&lt;&lt;zinb-imports&gt;&gt;
+&lt;&lt;tf-imports&gt;&gt;
+&lt;&lt;zinb-impl&gt;&gt;
+&lt;&lt;read-data-qc&gt;&gt;
+&lt;&lt;onehot-qc&gt;&gt;
+<span class="org-variable-name">mean</span>, <span class="org-variable-name">dispersion</span> = fit(
   umi=umi.values.T.astype(np.float32),
   onehot=onehot.values.astype(np.float32),
   size_factor=umi.agg(np.<span class="org-builtin">sum</span>).astype(np.float32).values.reshape(-1, 1),
   learning_rate=1e-2,
   max_epochs=8000)
-</pre>
-</div>
-
-<div class="org-src-container">
-<pre class="src src-ipython">pd.DataFrame(mean.T, index=umi.index, columns=onehot.columns).to_csv(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/mean2.txt.gz'</span>, sep=<span class="org-string">' '</span>, compression=<span class="org-string">'gzip'</span>)
+pd.DataFrame(mean.T, index=umi.index, columns=onehot.columns).to_csv(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/mean2.txt.gz'</span>, sep=<span class="org-string">' '</span>, compression=<span class="org-string">'gzip'</span>)
 pd.DataFrame(dispersion.T, index=umi.index, columns=onehot.columns).to_csv(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/dispersion2.txt.gz'</span>, sep=<span class="org-string">' '</span>, compression=<span class="org-string">'gzip'</span>)
 </pre>
 </div>
@@ -723,7 +732,7 @@ Percentile
 <span class="org-keyword">def</span> <span class="org-function-name">plot_fit</span>(umi, expected_counts, grid):
   <span class="org-variable-name">data</span> = umi.values.ravel()
   plt.clf()
-  plt.hist(data[data &lt;= grid.<span class="org-builtin">max</span>()], bins=grid, color=<span class="org-string">'k'</span>)
+  plt.hist(data[data &lt; grid.<span class="org-builtin">max</span>()], bins=grid, color=<span class="org-string">'k'</span>)
   plt.plot(grid[1:] - 0.5, expected_counts, c=<span class="org-string">'r'</span>)
   plt.xticks(grid)
   plt.xlabel(<span class="org-string">'UMI count'</span>)
@@ -732,7 +741,7 @@ Percentile
 </div>
 
 <p>
-The model appears to be zero-biased as expected:
+The model appears to be zero-biased as expected.
 </p>
 
 <div class="org-src-container">
@@ -876,7 +885,7 @@ Plot the data and fitted distribution for the zero-inflated model.
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2018-02-05 Mon 11:08</p>
+<p class="date">Created: 2018-02-07 Wed 18:09</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>
