@@ -41,18 +41,21 @@
   simply minimizing the negative log likelihood should give reasonable
   estimates.
 
-  We can additionally account for zero-inflation, by letting \(\pi_{ijk}\)
+  We can additionally account for zero-inflation, by letting \(\pi_{\cdot}\)
   denote the probability of a "technical zero" (i.e., not arising from the
-  negative-binomial). Following prior work, we introduce a dropout parameter
-  for each cell (indexed by \(i\) and \(j\)) and each gene ([[https://arxiv.org/abs/1709.02082][Lopez et al 2017]],
-  [[https://www.nature.com/articles/s41467-017-02554-5][Risso et al 2017]]).
+  negative-binomial).
+
+  As a first pass, estimate dropout assuming parameters \(\pi_k\) are shared
+  across cells (and individuals) for each gene. This assumption allows us to
+  directly estimate the parameter from the data without requiring
+  shrinkage/regularization to avoid overfitting.
 
   Then, the log-likelihood of the data is:
 
-  \[ \ln p(r_{ijk} \mid r_{ijk} = 0, \cdot) = -\ln(\pi_{ijk} + (1 - \pi_{ijk})
+  \[ \ln p(r_{ijk} \mid r_{ijk} = 0, \cdot) = -\ln(\pi_\cdot + (1 - \pi_{\cdot})
   \exp(\ln p(r_{ijk} \mid R_{ij}, \mu_{ik}, \phi_{ik}))) \]
 
-  \[ \ln p(r_{ijk} \mid r_{ijk} > 0, \cdot) = \ln(1 - \pi_{ijk}) + \ln p(r_{ijk} \mid R_{ij}, \mu_{ik}, \phi_{ik})) \]
+  \[ \ln p(r_{ijk} \mid r_{ijk} > 0, \cdot) = \ln(1 - \pi_{\cdot}) + \ln p(r_{ijk} \mid R_{ij}, \mu_{ik}, \phi_{ik})) \]
 
 * Setup                                                            :noexport:
 
@@ -71,7 +74,6 @@
 
   #+NAME: zinb-imports
   #+BEGIN_SRC ipython
-    import functools
     import numpy as np
     import pandas as pd
     import scipy.stats as st
@@ -82,14 +84,13 @@
   # Out[1]:
   :END:
 
-  #+NAME: plt-imports
   #+BEGIN_SRC ipython
     %matplotlib inline
     import colorcet
     import matplotlib.pyplot as plt
   #+END_SRC
 
-  #+RESULTS: plt-imports
+  #+RESULTS:
   :RESULTS:
   # Out[2]:
   :END:
@@ -135,28 +136,6 @@
   # Out[3]:
   :END:
 
-  Use genes on odd chromosomes as "training" (to decide which confounders to
-  correct for, and how to correct for them), and hold out genes on even
-  chromosomes to use as validation.
-
-  #+NAME: train-test-split
-  #+BEGIN_SRC ipython
-    genes = (pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/scqtl-genes.txt.gz')
-             .set_index('gene')
-             .query('source == "H. sapiens"')
-             .query('chr != "hsX"')
-             .query('chr != "hsY"')
-             .query('chr != "hsMT"'))
-    genes = genes[genes.apply(lambda x: bool(int(x['chr'][2:]) % 2), axis=1)]
-    umi = umi.align(genes, join='inner', axis='index')[0]
-  #+END_SRC
-
-  #+RESULTS: train-test-split
-  :RESULTS:
-  # Out[16]:
-  : (5918, 4865)
-  :END:
-
   Onehot-encode the samples.
 
   #+NAME: onehot-qc
@@ -170,13 +149,13 @@
 
   #+RESULTS: onehot-qc
   :RESULTS:
-  # Out[17]:
-  : (4865, 54)
+  # Out[31]:
+  : (4985, 54)
   :END:
 
   Check that one-hot encoding is OK:
 
-  #+BEGIN_SRC ipython
+  #+BEGIN_SRC ipython :async t
     for _ in range(100):
       gene = np.random.choice(umi.index)
       ind = np.random.choice(individuals)
@@ -187,8 +166,29 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[19]:
+  # Out[32]:
   :END:
+
+  #+BEGIN_SRC ipython
+    onehot.to_csv('/scratch/midway2/aksarkar/singlecell/onehot.txt.gz')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[33]:
+  :END:
+
+  To actually fit the models, don't read the entire data in. Instead use ~dask~
+  to process chunks at a time.
+
+  #+NAME: chunk-data
+  #+BEGIN_SRC ipython :eval never
+    import dask.dataframe
+    keep_samples = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/quality-single-cells.txt', index_col=0, header=None)
+    keep_genes = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/genes-pass-filter.txt', index_col=0, header=None)
+    onehot = pd.read_table('/scratch/midway2/aksarkar/singlecell/onehot.txt.gz')
+    umi = dd.read_csv('/home/aksarkar/projects/singlecell-qtl/data/scqtl-counts.txt.gz')
+  #+END_SRC
 
 * Serial algorithm
 
@@ -316,8 +316,8 @@
   We optimize all of the parameters together, using one-hot encoding to map
   parameters to data points. This makes inference more amenable to running on
   the GPU. Although this is slower for the NB estimation problem, it will be
-  faster for the ZINB estimation problem when parameters are shared between
-  genes and we need to operate on the entire count matrix.
+  faster for the ZINB estimation problem when parameters are shared and we need
+  to operate on the entire count matrix.
 
   Use tensorflow to automatically differentiate the negative log likelihood and
   perform gradient descent.
@@ -391,7 +391,7 @@
         inv_disp = tf.exp(tf.Variable(tf.zeros([m, p])))
 
         if zero_inflation:
-          dropout = tf.Variable(tf.zeros([n, p]))
+          dropout = tf.Variable(tf.zeros([1, p]))
           llik = tf.reduce_mean(
             zinb_llik(umi, size_factor * tf.matmul(onehot, mean),
                       tf.matmul(onehot, inv_disp), dropout))
@@ -459,58 +459,17 @@
   #+END_SRC
 
   #+RESULTS:
-  : Submitted batch job 42948607
+  : Submitted batch job 43203399
 
-  #+BEGIN_SRC ipython
-    mean = pd.read_table('/scratch/midway2/aksarkar/singlecell/mean.txt.gz', sep=' ', index_col=0)
-    mean2 = pd.read_table('/scratch/midway2/aksarkar/singlecell/mean2.txt.gz', sep=' ', index_col=0)
+  #+BEGIN_SRC sh
+    sacct -j 43203399 -o Elapsed
   #+END_SRC
 
   #+RESULTS:
-  :RESULTS:
-  # Out[2]:
-  :END:
-
-  Check how close the estimated parameters are.
-
-  #+BEGIN_SRC ipython
-    (np.isclose(mean.values, mean2.values)).all()
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[8]:
-  : False
-  :END:
-
-  #+BEGIN_SRC ipython
-    mask = np.where(np.logical_and(np.isfinite(mean.values), ~np.isclose(mean.values, mean2.values)))
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[23]:
-  :END:
-
-  #+BEGIN_SRC ipython
-    pd.Series(abs(mean.values[mask] - mean2.values[mask])).describe()
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[25]:
-  #+BEGIN_EXAMPLE
-    count    5685.000000
-    mean        0.000546
-    std         0.000889
-    min         0.000054
-    25%         0.000165
-    50%         0.000302
-    75%         0.000623
-    max         0.030600
-    dtype: float64
-  #+END_EXAMPLE
-  :END:
+  |    Elapsed |
+  | ---------- |
+  |   00:38:18 |
+  |   00:38:18 |
 
 * Visualize the fitted models
 
