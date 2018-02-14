@@ -361,7 +361,7 @@
       case_non_zero = -tf.nn.softplus(logodds) + nb_llik(x, mean, inv_disp)
       return tf.where(tf.less(x, 1e-8), case_zero, case_non_zero)
 
-    def fit(umi, onehot, size_factor, zero_inflation=False, learning_rate=1e-2, max_epochs=1000):
+    def fit(umi, onehot, size_factor, gene_dropout=False, ind_dropout=False, learning_rate=1e-2, max_epochs=1000):
       """Return estimated log mean and log dispersion. 
 
       If fitting a zero-inflated model, additionally return dropout log odds.
@@ -389,11 +389,16 @@
         mean = tf.exp(tf.Variable(tf.zeros([m, p])))
         inv_disp = tf.exp(tf.Variable(tf.zeros([m, p])))
 
-        if zero_inflation:
-          dropout = tf.Variable(tf.zeros([1, p]))
+        if gene_dropout:
+          if ind_dropout:
+            dropout = tf.Variable(tf.zeros([1, p]))
+          else:
+            dropout = tf.matmul(onehot, tf.Variable(tf.zeros([m, p])))
           llik = tf.reduce_mean(
             zinb_llik(umi, size_factor * tf.matmul(onehot, mean),
                       tf.matmul(onehot, inv_disp), dropout))
+        elif ind_dropout:
+          raise ValueError('Cannot specify individual-specific dropout without gene-specific dropout')
         else:
           llik = tf.reduce_sum(
             nb_llik(umi, size_factor * tf.matmul(onehot, mean),
@@ -500,15 +505,15 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[128]:
+  # Out[24]:
   #+BEGIN_EXAMPLE
     UMI
     Percentile
-    50           4.0
-    75           9.0
-    90          19.0
-    95          32.0
-    99          98.0
+    0            1.0
+    1            3.0
+    2            8.0
+    3           14.0
+    4           49.0
   #+END_EXAMPLE
   :END:
 
@@ -706,9 +711,9 @@
 
 * Fit ZINB
 
-  Estimate the parameters of the zero-inflated model.
+  Estimate the parameters of the zero-inflated model assuming dropout per gene.
 
-  #+BEGIN_SRC ipython :tangle zinb.py :noweb tangle
+  #+BEGIN_SRC ipython :eval never :tangle zinb.py :noweb tangle
     <<zinb-imports>>
     <<tf-imports>>
     <<read-data-qc>>
@@ -718,20 +723,13 @@
       umi=umi.values.T.astype(np.float32),
       onehot=onehot.values.astype(np.float32),
       size_factor=umi.agg(np.sum).astype(np.float32).values.reshape(-1, 1),
-      zero_inflation=True,
+      gene_dropout=True,
       learning_rate=1e-2,
       max_epochs=8000)
     pd.DataFrame(mean.T, index=umi.index, columns=onehot.columns).to_csv('/scratch/midway2/aksarkar/singlecell/zi-mean.txt.gz', sep=' ', compression='gzip')
     pd.DataFrame(dispersion.T, index=umi.index, columns=onehot.columns).to_csv('/scratch/midway2/aksarkar/singlecell/zi-dispersion.txt.gz', sep=' ', compression='gzip')
     pd.DataFrame(dropout.T, index=umi.index, columns=umi.columns).to_csv('/scratch/midway2/aksarkar/singlecell/zi-dropout.txt.gz', sep=' ', compression='gzip')
   #+END_SRC
-
-  #+BEGIN_SRC emacs-lisp :exports none
-    (org-babel-tangle)
-  #+END_SRC
-
-  #+RESULTS:
-  | zinb.py | tensorflow-nb.py | nb.py |
 
   #+BEGIN_SRC sh :eval never-export :exports none
     sbatch --partition=gpu2 --gres=gpu:1 --mem=16G --time=120 --job-name=zinb --output=zinb.out --error=zinb.err
@@ -766,6 +764,74 @@
   :END:
 
   #+BEGIN_SRC ipython :async t :ipyfile figure/zinb.org/zinb-hist.png
+    grid = np.arange(14)
+    exp_counts = expected_counts(umi, zi_mean, zi_disp, size, onehot, grid)
+    plot_fit(umi, exp_counts, grid)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[22]:
+  [[file:figure/zinb.org/zinb-hist.png]]
+  :END:
+
+* Fit ZINB2
+
+  Estimate the parameters of the zero-inflated model assuming dropout per
+  individual and gene.
+
+  #+BEGIN_SRC ipython :eval never :tangle zinb2.py :noweb tangle
+    <<zinb-imports>>
+    <<tf-imports>>
+    <<read-data-qc>>
+    <<onehot-qc>>
+    <<zinb-impl>>
+    mean, dispersion, dropout = fit(
+      umi=umi.values.T.astype(np.float32),
+      onehot=onehot.values.astype(np.float32),
+      size_factor=umi.agg(np.sum).astype(np.float32).values.reshape(-1, 1),
+      gene_dropout=True,
+      ind_dropout=True,
+      learning_rate=1e-2,
+      max_epochs=8000)
+    pd.DataFrame(mean.T, index=umi.index, columns=onehot.columns).to_csv('/scratch/midway2/aksarkar/singlecell/zi2-mean.txt.gz', sep=' ', compression='gzip')
+    pd.DataFrame(dispersion.T, index=umi.index, columns=onehot.columns).to_csv('/scratch/midway2/aksarkar/singlecell/zi2-dispersion.txt.gz', sep=' ', compression='gzip')
+    pd.DataFrame(dropout.T, index=umi.index, columns=umi.columns).to_csv('/scratch/midway2/aksarkar/singlecell/zi2-dropout.txt.gz', sep=' ', compression='gzip')
+  #+END_SRC
+
+  #+BEGIN_SRC sh :eval never-export :exports none
+    sbatch --partition=gpu2 --gres=gpu:1 --mem=16G --time=120 --job-name=zinb2 --output=zinb2.out --error=zinb2.err
+    #!/bin/bash
+    source activate scqtl
+    python zinb2.py
+  #+END_SRC
+
+  #+RESULTS:
+  : Submitted batch job 43215374
+
+  #+BEGIN_SRC sh :exports none
+    sacct -j 43207672 -o Elapsed
+  #+END_SRC
+
+  #+RESULTS:
+  |    Elapsed |
+  | ---------- |
+  |   01:06:08 |
+  |   01:06:08 |
+
+  Plot the data and fitted distribution.
+
+  #+BEGIN_SRC ipython
+    zi_mean = pd.read_table('/scratch/midway2/aksarkar/singlecell/zi2-mean.txt.gz', sep=' ', index_col=0)
+    zi_disp = pd.read_table('/scratch/midway2/aksarkar/singlecell/zi2-dispersion.txt.gz', sep=' ', index_col=0)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[21]:
+  :END:
+
+  #+BEGIN_SRC ipython :async t :ipyfile figure/zinb.org/zinb2-hist.png
     grid = np.arange(14)
     exp_counts = expected_counts(umi, zi_mean, zi_disp, size, onehot, grid)
     plot_fit(umi, exp_counts, grid)
