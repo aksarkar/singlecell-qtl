@@ -1,6 +1,5 @@
 #+TITLE: Mean/dispersion estimation
 #+SETUPFILE: setup.org
-#+OPTIONS: toc:nil
 
 * Introduction
 
@@ -69,7 +68,7 @@
   #+CALL: ipython3(memory="16G",venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 43215071
+  : Submitted batch job 43259529
 
   #+NAME: zinb-imports
   #+BEGIN_SRC ipython
@@ -166,15 +165,6 @@
   #+RESULTS:
   :RESULTS:
   # Out[32]:
-  :END:
-
-  #+BEGIN_SRC ipython
-    onehot.to_csv('/scratch/midway2/aksarkar/singlecell/onehot.txt.gz')
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[33]:
   :END:
 
 * Dask implementation                                              :noexport:
@@ -424,6 +414,70 @@
   :RESULTS:
   :END:
 
+* Quantile-quantile diagnostic plot
+
+  The challenge in visualizing the fitted distributions is that the
+  observations \(r_{ijk}\) are not drawn iid. from a distribution
+  \(g_{ik}(\cdot)\). 
+
+  Instead, we have \(r_{ijk} \sim g_{ijk}(\cdot)\), and we have used maximum
+  likelihood to estimate distributions \(\hat{g}_{ijk}\).
+
+  We can use an idea from ~ashr~: Let \(\hat{G}_{ijk}\) denote the CDF of
+  \(\hat{g}_{ijk}\). Then, the distribution of values
+  \(\hat{G}_{ijk}(r_{ijk})\) should be uniform.
+
+  #+BEGIN_SRC ipython
+    def estimated_cdf(x, mean, disp, size, onehot):
+      n = onehot.dot(np.exp(-disp.values.T) + 1e-8)
+      p = 1 / (1 + size.to_frame().values * onehot.dot(np.exp(mean.values + disp.values).T))
+      assert (n.values > 0).all()
+      assert (p.values >= 0).all()
+      assert (p.values <= 1).all()
+      return st.nbinom(n=n, p=p).cdf(x)
+
+    def diagnostic(umi, mean, disp, size, onehot):
+      q = estimated_cdf(umi.values.T, mean, disp, size, onehot)
+      plt.clf()
+      plt.scatter(x=np.linspace(0, 1, q.shape[0]),
+                  y=sorted(q.ravel()),
+                  s=0.5)
+      plt.plot([[0, 0], [1, 1]], c='black')
+      plt.title(umi.index[0])
+      plt.xlabel('Expected quantile')
+      plt.ylabel('Estimated quantile')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[5]:
+  :END:
+
+  Look at the quantiles of the QQ plots over all genes:
+
+  #+BEGIN_SRC ipython
+    def diagnostic_quantiles(umi, mean, disp, size, onehot, quantiles=None):
+      if quantiles is None:
+        quantiles = np.array([.1, .25, .5, .75, .99])
+      else:
+        quantiles = np.array(quantiles)
+        assert (0 <= quantiles <= 1).all()
+      cdf = np.sort(estimated_cdf(umi.values.T, mean, disp, size, onehot).T)
+      cdf_quantiles = np.percentile(cdf, 100 * quantiles, interpolation='higher', axis=0)
+
+      plt.clf()
+      for q, row in zip(quantiles, cdf_quantiles):
+        plt.scatter(x=np.linspace(0, 1, row.shape[0]), y=row, c=colorcet.cm['kbc'](q), s=.5, label=q)
+      plt.legend()
+      plt.xlabel('Expected quantile')
+      plt.ylabel('Estimated quantile')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[6]:
+  :END:
+
 * Histogram diagnostic plot
 
   The challenge in visualizing the fitted distributions is that the
@@ -484,7 +538,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[18]:
+  # Out[7]:
   :END:
 
 * Fit NB
@@ -511,17 +565,6 @@
   :RESULTS:
   :END:
 
-  # [[Https://orgmode.org/manual/Extracting-source-code.html][Tangle]] the code from this file and run it through ~sbatch~. (This makes it
-  # easier to keep a long running kernel for the followup analysis, while
-  # running the hard estimation problem on a GPU node.)
-
-  #+BEGIN_SRC emacs-lisp :exports none
-    (org-babel-tangle)
-  #+END_SRC
-
-  #+RESULTS:
-  | zinb.py | tensorflow-nb.py | nb.py |
-
   #+BEGIN_SRC sh :eval never-export :exports none
     sbatch --partition=gpu2 --gres=gpu:1 --mem=16G --time=120 --job-name=tfnb --output=tfnb.out --error=tfnb.err
     #!/bin/bash
@@ -543,58 +586,6 @@
   |   00:38:18 |
 
   Check the goodness of fit.
-
-  #+BEGIN_SRC ipython :async t :ipyfile figure/zinb.org/nb-hist.png
-    grid = np.arange(14)
-    plot_fit(umi, expected_counts(umi, mean, disp, size, onehot, grid), grid)
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[19]:
-  [[file:figure/zinb.org/nb-hist.png]]
-  :END:
-
-* Quantile-quantile diagnostic plot
-
-  The challenge in visualizing the fitted distributions is that the
-  observations \(r_{ijk}\) are not drawn iid. from a distribution
-  \(g_{ik}(\cdot)\). 
-
-  Instead, we have \(r_{ijk} \sim g_{ijk}(\cdot)\), and we have used maximum
-  likelihood to estimate distributions \(\hat{g}_{ijk}\).
-
-  We can use an idea from ~ashr~: Let \(\hat{G}_{ijk}\) denote the CDF of
-  \(\hat{g}_{ijk}\). Then, the distribution of values
-  \(\hat{G}_{ijk}(r_{ijk})\) should be uniform.
-
-  #+BEGIN_SRC ipython
-    def estimated_cdf(x, mean, disp, size, onehot):
-      n = onehot.dot(np.exp(-disp.values.T) + 1e-8)
-      p = 1 / (1 + size.to_frame().values * onehot.dot(np.exp(mean.values + disp.values).T))
-      assert (n.values > 0).all()
-      assert (p.values >= 0).all()
-      assert (p.values <= 1).all()
-      return st.nbinom(n=n, p=p).cdf(x)
-
-    def diagnostic(umi, mean, disp, size, onehot):
-      q = estimated_cdf(umi.values.T, mean, disp, size, onehot)
-      plt.clf()
-      plt.scatter(x=np.linspace(0, 1, q.shape[0]),
-                  y=sorted(q.ravel()),
-                  s=0.5)
-      plt.plot([[0, 0], [1, 1]], c='black')
-      plt.title(umi.index[0])
-      plt.xlabel('Expected quantile')
-      plt.ylabel('Estimated quantile')
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[5]:
-  :END:
-
-  Look at a particular gene:
 
   #+BEGIN_SRC ipython
     mean = pd.read_table('/scratch/midway2/aksarkar/singlecell/mean2.txt.gz', sep=' ', index_col=0)
@@ -623,31 +614,6 @@
   dispersions are biased upwards due to zero-inflation. Accordingly, we expect
   to find some genes which depart even more from uniform quantiles.
 
-  Look at the quantiles of the QQ plots over all genes:
-
-  #+BEGIN_SRC ipython
-    def diagnostic_quantiles(umi, mean, disp, size, onehot, quantiles=None):
-      if quantiles is None:
-        quantiles = np.array([.1, .25, .5, .75, .99])
-      else:
-        quantiles = np.array(quantiles)
-        assert (0 <= quantiles <= 1).all()
-      cdf = np.sort(estimated_cdf(umi.values.T, mean, disp, size, onehot).T)
-      cdf_quantiles = np.percentile(cdf, 100 * quantiles, interpolation='higher', axis=0)
-
-      plt.clf()
-      for q, row in zip(quantiles, cdf_quantiles):
-        plt.scatter(x=np.linspace(0, 1, row.shape[0]), y=row, c=colorcet.cm['kbc'](q), s=.5, label=q)
-      plt.legend()
-      plt.xlabel('Expected quantile')
-      plt.ylabel('Estimated quantile')
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[9]:
-  :END:
-
   #+BEGIN_SRC ipython :ipyfile figure/zinb.org/nb-quantiles-dist.png
     diagnostic_quantiles(umi, mean, disp, size, onehot)
   #+END_SRC
@@ -656,6 +622,17 @@
   :RESULTS:
   # Out[10]:
   [[file:figure/zinb.org/nb-quantiles-dist.png]]
+  :END:
+
+  #+BEGIN_SRC ipython :async t :ipyfile figure/zinb.org/nb-hist.png
+    grid = np.arange(14)
+    plot_fit(umi, expected_counts(umi, mean, disp, size, onehot, grid), grid)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[19]:
+  [[file:figure/zinb.org/nb-hist.png]]
   :END:
 
 * Fit ZINB
@@ -681,35 +658,36 @@
   #+END_SRC
 
   #+BEGIN_SRC sh :eval never-export :exports none
-    sbatch --partition=gpu2 --gres=gpu:1 --mem=5G --time=120 --job-name=zinb --output=zinb.out --error=zinb.err
+    sbatch --partition=gpu2 --gres=gpu:1 --mem=16G --time=120 --job-name=zinb --output=zinb.out --error=zinb.err
     #!/bin/bash
     source activate scqtl
     python zinb.py
   #+END_SRC
 
   #+RESULTS:
-  : Submitted batch job 43243115
+  : Submitted batch job 43244397
 
   #+BEGIN_SRC sh :exports none
-    sacct -j 43243115 -o Elapsed,MaxRSS
+    sacct -j 43244397 -o Elapsed,MaxRSS,MaxVMSize
   #+END_SRC
 
   #+RESULTS:
-  |    Elapsed | MaxRSS     |
-  | ---------- | ---------- |
-  |   00:01:58 |            |
-  |   00:01:58 | 3447716K   |
+  |    Elapsed | MaxRSS     | MaxVMSize  |
+  | ---------- | ---------- | ---------- |
+  |   01:05:22 |            |            |
+  |   01:05:22 | 3957908K   | 162203788K |
 
   Plot the data and fitted distribution for the zero-inflated model.
 
   #+BEGIN_SRC ipython
     zi_mean = pd.read_table('/scratch/midway2/aksarkar/singlecell/zi-mean.txt.gz', sep=' ', index_col=0)
     zi_disp = pd.read_table('/scratch/midway2/aksarkar/singlecell/zi-dispersion.txt.gz', sep=' ', index_col=0)
+    zi_dropout = pd.read_table('/scratch/midway2/aksarkar/singlecell/zi-dropout.txt.gz', sep=' ', index_col=0)
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[21]:
+  # Out[8]:
   :END:
 
   #+BEGIN_SRC ipython :async t :ipyfile figure/zinb.org/zinb-hist.png
@@ -736,7 +714,7 @@
     <<read-data-qc>>
     <<onehot-qc>>
     mean, dispersion, dropout = fit(
-      umi=umi.head().values.T.astype(np.float32),
+      umi=umi.values.T.astype(np.float32),
       onehot=onehot.values.astype(np.float32),
       size_factor=umi.agg(np.sum).astype(np.float32).values.reshape(-1, 1),
       gene_dropout=True,
@@ -756,17 +734,17 @@
   #+END_SRC
 
   #+RESULTS:
-  : Submitted batch job 43215386
+  : Submitted batch job 43244664
 
   #+BEGIN_SRC sh :exports none
-    sacct -j 43215386 -o Elapsed,MaxRSS
+    sacct -j 43244664 -o Elapsed,MaxRSS
   #+END_SRC
 
   #+RESULTS:
-  |    Elapsed | MaxRSS     | MaxVMSize  |
-  | ---------- | ---------- | ---------- |
-  |   01:05:20 |            |            |
-  |   01:05:20 | 4130080K   | 162538432K |
+  |    Elapsed | MaxRSS     |
+  | ---------- | ---------- |
+  |   01:22:34 |            |
+  |   01:22:34 | 4851740K   |
 
   Plot the data and fitted distribution.
 
