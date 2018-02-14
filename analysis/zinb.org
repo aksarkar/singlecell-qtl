@@ -424,57 +424,6 @@
   :RESULTS:
   :END:
 
-  #+BEGIN_SRC ipython :eval never :tangle tensorflow-nb.py :noweb tangle
-    <<zinb-imports>>
-    <<tf-imports>>
-    <<zinb-impl>>
-    <<read-data-qc>>
-    <<onehot-qc>>
-    mean, dispersion = fit(
-      umi=umi.values.T.astype(np.float32),
-      onehot=onehot.values.astype(np.float32),
-      size_factor=umi.agg(np.sum).astype(np.float32).values.reshape(-1, 1),
-      learning_rate=1e-2,
-      max_epochs=8000)
-    pd.DataFrame(mean.T, index=umi.index, columns=onehot.columns).to_csv('/scratch/midway2/aksarkar/singlecell/mean2.txt.gz', sep=' ', compression='gzip')
-    pd.DataFrame(dispersion.T, index=umi.index, columns=onehot.columns).to_csv('/scratch/midway2/aksarkar/singlecell/dispersion2.txt.gz', sep=' ', compression='gzip')
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  :END:
-
-  # [[Https://orgmode.org/manual/Extracting-source-code.html][Tangle]] the code from this file and run it through ~sbatch~. (This makes it
-  # easier to keep a long running kernel for the followup analysis, while
-  # running the hard estimation problem on a GPU node.)
-
-  #+BEGIN_SRC emacs-lisp :exports none
-    (org-babel-tangle)
-  #+END_SRC
-
-  #+RESULTS:
-  | zinb.py | tensorflow-nb.py | nb.py |
-
-  #+BEGIN_SRC sh :eval never-export :exports none
-    sbatch --partition=gpu2 --gres=gpu:1 --mem=16G --time=120 --job-name=tfnb --output=tfnb.out --error=tfnb.err
-    #!/bin/bash
-    source activate scqtl
-    python tensorflow-nb.py
-  #+END_SRC
-
-  #+RESULTS:
-  : Submitted batch job 43203399
-
-  #+BEGIN_SRC sh :exports none
-    sacct -j 43203399 -o Elapsed
-  #+END_SRC
-
-  #+RESULTS:
-  |    Elapsed |
-  | ---------- |
-  |   00:38:18 |
-  |   00:38:18 |
-
 * Histogram diagnostic plot
 
   The challenge in visualizing the fitted distributions is that the
@@ -716,9 +665,9 @@
   #+BEGIN_SRC ipython :eval never :tangle zinb.py :noweb tangle
     <<zinb-imports>>
     <<tf-imports>>
+    <<zinb-impl>>
     <<read-data-qc>>
     <<onehot-qc>>
-    <<zinb-impl>>
     mean, dispersion, dropout = fit(
       umi=umi.values.T.astype(np.float32),
       onehot=onehot.values.astype(np.float32),
@@ -728,28 +677,28 @@
       max_epochs=8000)
     pd.DataFrame(mean.T, index=umi.index, columns=onehot.columns).to_csv('/scratch/midway2/aksarkar/singlecell/zi-mean.txt.gz', sep=' ', compression='gzip')
     pd.DataFrame(dispersion.T, index=umi.index, columns=onehot.columns).to_csv('/scratch/midway2/aksarkar/singlecell/zi-dispersion.txt.gz', sep=' ', compression='gzip')
-    pd.DataFrame(dropout.T, index=umi.index, columns=umi.columns).to_csv('/scratch/midway2/aksarkar/singlecell/zi-dropout.txt.gz', sep=' ', compression='gzip')
+    pd.DataFrame(dropout.T, index=umi.index).to_csv('/scratch/midway2/aksarkar/singlecell/zi-dropout.txt.gz', sep=' ', compression='gzip')
   #+END_SRC
 
   #+BEGIN_SRC sh :eval never-export :exports none
-    sbatch --partition=gpu2 --gres=gpu:1 --mem=16G --time=120 --job-name=zinb --output=zinb.out --error=zinb.err
+    sbatch --partition=gpu2 --gres=gpu:1 --mem=5G --time=120 --job-name=zinb --output=zinb.out --error=zinb.err
     #!/bin/bash
     source activate scqtl
     python zinb.py
   #+END_SRC
 
   #+RESULTS:
-  : Submitted batch job 43207672
+  : Submitted batch job 43243115
 
   #+BEGIN_SRC sh :exports none
-    sacct -j 43207672 -o Elapsed
+    sacct -j 43243115 -o Elapsed,MaxRSS
   #+END_SRC
 
   #+RESULTS:
-  |    Elapsed |
-  | ---------- |
-  |   01:06:08 |
-  |   01:06:08 |
+  |    Elapsed | MaxRSS     |
+  | ---------- | ---------- |
+  |   00:01:58 |            |
+  |   00:01:58 | 3447716K   |
 
   Plot the data and fitted distribution for the zero-inflated model.
 
@@ -783,11 +732,11 @@
   #+BEGIN_SRC ipython :eval never :tangle zinb2.py :noweb tangle
     <<zinb-imports>>
     <<tf-imports>>
+    <<zinb-impl>>
     <<read-data-qc>>
     <<onehot-qc>>
-    <<zinb-impl>>
     mean, dispersion, dropout = fit(
-      umi=umi.values.T.astype(np.float32),
+      umi=umi.head().values.T.astype(np.float32),
       onehot=onehot.values.astype(np.float32),
       size_factor=umi.agg(np.sum).astype(np.float32).values.reshape(-1, 1),
       gene_dropout=True,
@@ -796,7 +745,7 @@
       max_epochs=8000)
     pd.DataFrame(mean.T, index=umi.index, columns=onehot.columns).to_csv('/scratch/midway2/aksarkar/singlecell/zi2-mean.txt.gz', sep=' ', compression='gzip')
     pd.DataFrame(dispersion.T, index=umi.index, columns=onehot.columns).to_csv('/scratch/midway2/aksarkar/singlecell/zi2-dispersion.txt.gz', sep=' ', compression='gzip')
-    pd.DataFrame(dropout.T, index=umi.index, columns=umi.columns).to_csv('/scratch/midway2/aksarkar/singlecell/zi2-dropout.txt.gz', sep=' ', compression='gzip')
+    pd.DataFrame(dropout.T, index=umi.index, columns=onehot.columns).to_csv('/scratch/midway2/aksarkar/singlecell/zi2-dropout.txt.gz', sep=' ', compression='gzip')
   #+END_SRC
 
   #+BEGIN_SRC sh :eval never-export :exports none
@@ -810,14 +759,14 @@
   : Submitted batch job 43215386
 
   #+BEGIN_SRC sh :exports none
-    sacct -j 43207672 -o Elapsed
+    sacct -j 43215386 -o Elapsed,MaxRSS
   #+END_SRC
 
   #+RESULTS:
-  |    Elapsed |
-  | ---------- |
-  |   01:06:08 |
-  |   01:06:08 |
+  |    Elapsed | MaxRSS     | MaxVMSize  |
+  | ---------- | ---------- | ---------- |
+  |   01:05:20 |            |            |
+  |   01:05:20 | 4130080K   | 162538432K |
 
   Plot the data and fitted distribution.
 
