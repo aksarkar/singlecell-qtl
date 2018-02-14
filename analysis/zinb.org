@@ -391,9 +391,9 @@
 
         if gene_dropout:
           if ind_dropout:
-            dropout = tf.Variable(tf.zeros([1, p]))
-          else:
             dropout = tf.matmul(onehot, tf.Variable(tf.zeros([m, p])))
+          else:
+            dropout = tf.Variable(tf.zeros([1, p]))
           llik = tf.reduce_mean(
             zinb_llik(umi, size_factor * tf.matmul(onehot, mean),
                       tf.matmul(onehot, inv_disp), dropout))
@@ -406,7 +406,7 @@
 
         train = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(-llik)
         opt = [tf.log(mean), -tf.log(inv_disp)]
-        if zero_inflation:
+        if gene_dropout:
           opt.append(dropout)
         curr = float('-inf')
         with tf.Session() as sess:
@@ -807,7 +807,7 @@
   #+END_SRC
 
   #+RESULTS:
-  : Submitted batch job 43215374
+  : Submitted batch job 43215386
 
   #+BEGIN_SRC sh :exports none
     sacct -j 43207672 -o Elapsed
