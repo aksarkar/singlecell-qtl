@@ -68,7 +68,7 @@
   #+CALL: ipython3(memory="16G",venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 43259529
+  : Submitted batch job 43294342
 
   #+NAME: zinb-imports
   #+BEGIN_SRC ipython
@@ -202,6 +202,12 @@
   Optimize the negative log-likelihood using BFGS.
 
   #+BEGIN_SRC ipython :tangle nb.py
+    def zinb(theta, x, size):
+      theta, dropout = theta[:2], scipy.special.expit(theta[2])
+      case_zero = -np.log(dropout + (1 - dropout) * np.exp(nll(theta, x, size)))
+      case_non_zero = np.log(1 - dropout) + nll(theta, x, size)
+      return np.where(x < 1e-8, case_zero, case_non_zero).mean()
+
     def nll(theta, x, size):
       mean, inv_disp = np.exp(theta)
       mean *= size
@@ -211,7 +217,7 @@
                inv_disp * np.log(1 + mean / inv_disp + 1e-8) +
                scipy.special.gammaln(x + inv_disp) -
                scipy.special.gammaln(inv_disp) -
-               scipy.special.gammaln(x + 1)).sum()
+               scipy.special.gammaln(x + 1)).mean()
 
     def fit_scipy(x, size):
       res = scipy.optimize.minimize(fun=nll, x0=[0, 0], args=(x, size), tol=1e-4)
@@ -231,7 +237,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[103]:
+  # Out[24]:
   :END:
 
   Output record-like data for each parameter to make reassembling the result
@@ -381,9 +387,11 @@
 
         if gene_dropout:
           if ind_dropout:
-            dropout = tf.matmul(onehot, tf.Variable(tf.zeros([m, p])))
+            dropout_params = tf.Variable(tf.zeros([m, p]))
+            dropout = tf.matmul(onehot, dropout_params)
           else:
-            dropout = tf.Variable(tf.zeros([1, p]))
+            dropout_params = tf.Variable(tf.zeros([1, p]))
+            dropout = dropout_params
           llik = tf.reduce_mean(
             zinb_llik(umi, size_factor * tf.matmul(onehot, mean),
                       tf.matmul(onehot, inv_disp), dropout))
@@ -397,7 +405,7 @@
         train = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(-llik)
         opt = [tf.log(mean), -tf.log(inv_disp)]
         if gene_dropout:
-          opt.append(dropout)
+          opt.append(dropout_params)
         curr = float('-inf')
         with tf.Session() as sess:
           sess.run(tf.global_variables_initializer())
@@ -428,16 +436,19 @@
   \(\hat{G}_{ijk}(r_{ijk})\) should be uniform.
 
   #+BEGIN_SRC ipython
-    def estimated_cdf(x, mean, disp, size, onehot):
+    def estimated_cdf(x, mean, disp, size, onehot, dropout=None):
       n = onehot.dot(np.exp(-disp.values.T) + 1e-8)
       p = 1 / (1 + size.to_frame().values * onehot.dot(np.exp(mean.values + disp.values).T))
       assert (n.values > 0).all()
       assert (p.values >= 0).all()
       assert (p.values <= 1).all()
-      return st.nbinom(n=n, p=p).cdf(x)
+      G = st.nbinom(n=n, p=p).cdf(x)
+      if dropout is not None:
+        G = sp.expit(-dropout.values.T) * G + sp.expit(dropout.values.T)
+      return G
 
-    def diagnostic(umi, mean, disp, size, onehot):
-      q = estimated_cdf(umi.values.T, mean, disp, size, onehot)
+    def diagnostic(umi, mean, disp, size, onehot, dropout=None):
+      q = estimated_cdf(umi.values.T, mean, disp, size, onehot, dropout=dropout)
       plt.clf()
       plt.scatter(x=np.linspace(0, 1, q.shape[0]),
                   y=sorted(q.ravel()),
@@ -450,24 +461,25 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[5]:
+  # Out[62]:
   :END:
 
   Look at the quantiles of the QQ plots over all genes:
 
   #+BEGIN_SRC ipython
-    def diagnostic_quantiles(umi, mean, disp, size, onehot, quantiles=None):
+    def diagnostic_quantiles(umi, mean, disp, size, onehot, dropout=None, quantiles=None):
       if quantiles is None:
-        quantiles = np.array([.1, .25, .5, .75, .99])
+        quantiles = np.array([.05, .25, .5, .75, .95])
       else:
         quantiles = np.array(quantiles)
         assert (0 <= quantiles <= 1).all()
-      cdf = np.sort(estimated_cdf(umi.values.T, mean, disp, size, onehot).T)
+      cdf = np.sort(estimated_cdf(umi.values.T, mean, disp, size, onehot, dropout=dropout).T)
       cdf_quantiles = np.percentile(cdf, 100 * quantiles, interpolation='higher', axis=0)
 
       plt.clf()
       for q, row in zip(quantiles, cdf_quantiles):
         plt.scatter(x=np.linspace(0, 1, row.shape[0]), y=row, c=colorcet.cm['kbc'](q), s=.5, label=q)
+      plt.plot([0, 1], [0, 1], c='r', ls='dashed')
       plt.legend()
       plt.xlabel('Expected quantile')
       plt.ylabel('Estimated quantile')
@@ -475,7 +487,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[6]:
+  # Out[56]:
   :END:
 
 * Histogram diagnostic plot
@@ -595,7 +607,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[6]:
+  # Out[59]:
   :END:
 
   #+BEGIN_SRC ipython :ipyfile figure/zinb.org/nb-quantiles.png
@@ -604,7 +616,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[8]:
+  # Out[60]:
   [[file:figure/zinb.org/nb-quantiles.png]]
   :END:
 
@@ -620,7 +632,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[10]:
+  # Out[61]:
   [[file:figure/zinb.org/nb-quantiles-dist.png]]
   :END:
 
@@ -677,7 +689,7 @@
   |   01:05:22 |            |            |
   |   01:05:22 | 3957908K   | 162203788K |
 
-  Plot the data and fitted distribution for the zero-inflated model.
+  Plot the diagnostic for the model.
 
   #+BEGIN_SRC ipython
     zi_mean = pd.read_table('/scratch/midway2/aksarkar/singlecell/zi-mean.txt.gz', sep=' ', index_col=0)
@@ -690,16 +702,14 @@
   # Out[8]:
   :END:
 
-  #+BEGIN_SRC ipython :async t :ipyfile figure/zinb.org/zinb-hist.png
-    grid = np.arange(14)
-    exp_counts = expected_counts(umi, zi_mean, zi_disp, size, onehot, grid)
-    plot_fit(umi, exp_counts, grid)
+  #+BEGIN_SRC ipython :ipyfile figure/zinb.org/zinb-diagnostic.png
+    diagnostic_quantiles(umi, zi_mean, zi_disp, size, onehot, zi_dropout)
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[22]:
-  [[file:figure/zinb.org/zinb-hist.png]]
+  # Out[63]:
+  [[file:figure/zinb.org/zinb-diagnostic.png]]
   :END:
 
 * Fit ZINB2
@@ -734,7 +744,7 @@
   #+END_SRC
 
   #+RESULTS:
-  : Submitted batch job 43244664
+  : Submitted batch job 43299007
 
   #+BEGIN_SRC sh :exports none
     sacct -j 43244664 -o Elapsed,MaxRSS
@@ -749,8 +759,9 @@
   Plot the data and fitted distribution.
 
   #+BEGIN_SRC ipython
-    zi_mean = pd.read_table('/scratch/midway2/aksarkar/singlecell/zi2-mean.txt.gz', sep=' ', index_col=0)
-    zi_disp = pd.read_table('/scratch/midway2/aksarkar/singlecell/zi2-dispersion.txt.gz', sep=' ', index_col=0)
+    zi2_mean = pd.read_table('/scratch/midway2/aksarkar/singlecell/zi2-mean.txt.gz', sep=' ', index_col=0)
+    zi2_disp = pd.read_table('/scratch/midway2/aksarkar/singlecell/zi2-dispersion.txt.gz', sep=' ', index_col=0)
+    zi2_dropout = pd.read_table('/scratch/midway2/aksarkar/singlecell/zi2-dropout.txt.gz', sep=' ', index_col=0)
   #+END_SRC
 
   #+RESULTS:
@@ -758,9 +769,19 @@
   # Out[21]:
   :END:
 
+  #+BEGIN_SRC ipython :ipyfile figure/zinb.org/zinb2-diagnostic.png
+    diagnostic_quantiles(umi, zi2_mean, zi2_disp, size, onehot, zi2_dropout)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[44]:
+  [[file:figure/zinb.org/zinb-diagnostic.png]]
+  :END:
+
   #+BEGIN_SRC ipython :async t :ipyfile figure/zinb.org/zinb2-hist.png
     grid = np.arange(14)
-    exp_counts = expected_counts(umi, zi_mean, zi_disp, size, onehot, grid)
+    exp_counts = expected_counts(umi, zi2_mean, zi2_disp, size, onehot, grid)
     plot_fit(umi, exp_counts, grid)
   #+END_SRC
 
