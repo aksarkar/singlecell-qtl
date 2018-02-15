@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2018-02-15 Thu 10:41 -->
+<!-- 2018-02-15 Thu 17:00 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mean/dispersion estimation</title>
@@ -273,9 +273,10 @@ analyses:
 
 <ol class="org-ol">
 <li><a href="#org428aa93">We implement GPU-based</a> maximum likelihood estimation of the parameters</li>
-<li><a href="#org1a397c5">We develop visual diagnostics</a> of the fitted models to check goodness of fit</li>
+<li><a href="#orge3a2968">We develop visual diagnostics</a> of the fitted models to check goodness of fit</li>
 <li><a href="#orge17e562">We fit a model without dropout</a> and show it does not fit the data</li>
 <li><a href="#org3c6170a">We fit a model assuming dropout per gene</a></li>
+<li><a href="#org72d12f4">We fit a model assumint dropout per individual per gene</a></li>
 </ol>
 </div>
 </div>
@@ -352,6 +353,15 @@ Then, the log-likelihood of the data is:
 <p>
 Read the QC'ed data.
 </p>
+
+<p>
+Compute size factors.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">size</span> = umi.agg(np.<span class="org-builtin">sum</span>)
+</pre>
+</div>
 
 <p>
 Onehot-encode the samples.
@@ -473,7 +483,7 @@ perform gradient descent.
     <span class="org-keyword">if</span> gene_dropout:
       <span class="org-keyword">if</span> ind_dropout:
         <span class="org-variable-name">dropout_params</span> = tf.Variable(tf.zeros([m, p]))
-        <span class="org-variable-name">dropout</span> = tf.matmul(onehot, dropout)
+        <span class="org-variable-name">dropout</span> = tf.matmul(onehot, dropout_params)
       <span class="org-keyword">else</span>:
         <span class="org-variable-name">dropout_params</span> = tf.Variable(tf.zeros([1, p]))
         <span class="org-variable-name">dropout</span> = dropout_params
@@ -527,19 +537,21 @@ We can use an idea from <code>ashr</code>: Let \(\hat{G}_{ijk}\) denote the CDF 
 </p>
 
 <div class="org-src-container">
-<pre class="src src-ipython"><span class="org-keyword">def</span> <span class="org-function-name">estimated_cdf</span>(x, mean, disp, size, onehot, dropout=<span class="org-constant">None</span>):
+<pre class="src src-ipython"><span class="org-keyword">def</span> <span class="org-function-name">estimated_cdf</span>(x, mean, disp, size, onehot, gene_dropout=<span class="org-constant">None</span>, ind_dropout=<span class="org-constant">None</span>):
   <span class="org-variable-name">n</span> = onehot.dot(np.exp(-disp.values.T) + 1e-8)
   <span class="org-variable-name">p</span> = 1 / (1 + size.to_frame().values * onehot.dot(np.exp(mean.values + disp.values).T))
   <span class="org-keyword">assert</span> (n.values &gt; 0).<span class="org-builtin">all</span>()
   <span class="org-keyword">assert</span> (p.values &gt;= 0).<span class="org-builtin">all</span>()
   <span class="org-keyword">assert</span> (p.values &lt;= 1).<span class="org-builtin">all</span>()
   <span class="org-variable-name">G</span> = st.nbinom(n=n, p=p).cdf(x)
-  <span class="org-keyword">if</span> dropout <span class="org-keyword">is</span> <span class="org-keyword">not</span> <span class="org-constant">None</span>:
-    <span class="org-variable-name">G</span> = sp.expit(-dropout.values.T) * G + sp.expit(dropout.values.T)
+  <span class="org-keyword">if</span> gene_dropout <span class="org-keyword">is</span> <span class="org-keyword">not</span> <span class="org-constant">None</span>:
+    <span class="org-variable-name">G</span> = sp.expit(-gene_dropout.values.T) * G + sp.expit(gene_dropout.values.T)
+  <span class="org-keyword">elif</span> ind_dropout <span class="org-keyword">is</span> <span class="org-keyword">not</span> <span class="org-constant">None</span>:
+    <span class="org-variable-name">G</span> = onehot.dot(sp.expit(-ind_dropout.values.T)) * G + onehot.dot(sp.expit(ind_dropout.values.T))
   <span class="org-keyword">return</span> G
 
-<span class="org-keyword">def</span> <span class="org-function-name">diagnostic</span>(umi, mean, disp, size, onehot, dropout=<span class="org-constant">None</span>):
-  <span class="org-variable-name">q</span> = estimated_cdf(umi.values.T, mean, disp, size, onehot, dropout=dropout)
+<span class="org-keyword">def</span> <span class="org-function-name">diagnostic</span>(umi, mean, disp, size, onehot, **kwargs):
+  <span class="org-variable-name">q</span> = estimated_cdf(umi.values.T, mean, disp, size, onehot, **kwargs)
   plt.clf()
   plt.scatter(x=np.linspace(0, 1, q.shape[0]),
               y=<span class="org-builtin">sorted</span>(q.ravel()),
@@ -556,13 +568,13 @@ Look at the quantiles of the QQ plots over all genes:
 </p>
 
 <div class="org-src-container">
-<pre class="src src-ipython"><span class="org-keyword">def</span> <span class="org-function-name">diagnostic_quantiles</span>(umi, mean, disp, size, onehot, dropout=<span class="org-constant">None</span>, quantiles=<span class="org-constant">None</span>):
+<pre class="src src-ipython"><span class="org-keyword">def</span> <span class="org-function-name">diagnostic_quantiles</span>(umi, mean, disp, size, onehot, quantiles=<span class="org-constant">None</span>, **kwargs):
   <span class="org-keyword">if</span> quantiles <span class="org-keyword">is</span> <span class="org-constant">None</span>:
     <span class="org-variable-name">quantiles</span> = np.array([.05, .25, .5, .75, .95])
   <span class="org-keyword">else</span>:
     <span class="org-variable-name">quantiles</span> = np.array(quantiles)
     <span class="org-keyword">assert</span> (0 &lt;= quantiles &lt;= 1).<span class="org-builtin">all</span>()
-  <span class="org-variable-name">cdf</span> = np.sort(estimated_cdf(umi.values.T, mean, disp, size, onehot, dropout=dropout).T)
+  <span class="org-variable-name">cdf</span> = np.sort(estimated_cdf(umi.values.T, mean, disp, size, onehot, **kwargs).T)
   <span class="org-variable-name">cdf_quantiles</span> = np.percentile(cdf, 100 * quantiles, interpolation=<span class="org-string">'higher'</span>, axis=0)
 
   plt.clf()
@@ -572,75 +584,6 @@ Look at the quantiles of the QQ plots over all genes:
   plt.legend()
   plt.xlabel(<span class="org-string">'Expected quantile'</span>)
   plt.ylabel(<span class="org-string">'Estimated quantile'</span>)
-</pre>
-</div>
-</div>
-</div>
-
-<div id="outline-container-org1a397c5" class="outline-2">
-<h2 id="org1a397c5">Histogram diagnostic plot</h2>
-<div class="outline-text-2" id="text-org1a397c5">
-<p>
-The challenge in visualizing the fitted distributions is that the
-observations \(r_{ijk}\) are not drawn iid. from a distribution
-\(g_{ik}(\cdot)\). 
-</p>
-
-<p>
-Instead, we have \(r_{ijk} \sim g_{ijk}(\cdot)\), and we have used maximum
-likelihood to estimate distributions \(\hat{g}_{ijk}\).
-</p>
-
-<p>
-Plot the expected number of draws from \(\bar{g}\), assuming the number of
-draws in the interval \([a, b]\) is \(\mathrm{Bin}(N, \bar{G}(b) -
-  \bar{G}(a))\), where \(N\) is the total number of observations and
-\(\bar{G}\) is the average CDF:
-</p>
-
-<p>
-\[ \bar{G}(x) = \frac{1}{N} \sum_{i,j,k} \hat{G}_{ijk}(x) \]
-</p>
-
-<p>
-The data distribution has an extremely long tail, so truncate it to make the
-majority of the fit easier to see:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span class="org-variable-name">query</span> = (pd.Series([50, 75, 90, 95, 99])
-         .<span class="org-builtin">apply</span>(<span class="org-keyword">lambda</span> x: np.percentile(umi.values.ravel(), x))
-         .to_frame()
-         .rename_axis(<span class="org-string">'Percentile'</span>, axis=<span class="org-string">'index'</span>))
-<span class="org-variable-name">query.columns</span> = [<span class="org-string">'UMI'</span>]
-query
-</pre>
-</div>
-
-<pre class="example">
-UMI
-Percentile
-0            1.0
-1            3.0
-2            8.0
-3           14.0
-4           49.0
-</pre>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span class="org-keyword">def</span> <span class="org-function-name">expected_counts</span>(umi, mean, disp, size, onehot, grid):
-  <span class="org-variable-name">data</span> = umi.values.ravel()
-  <span class="org-variable-name">average_cdf</span> = [np.mean(estimated_cdf(g, mean, disp, size, onehot)) <span class="org-keyword">for</span> g <span class="org-keyword">in</span> grid]
-  <span class="org-keyword">return</span> data.shape[0] * np.diff(average_cdf)
-
-<span class="org-keyword">def</span> <span class="org-function-name">plot_fit</span>(umi, expected_counts, grid):
-  <span class="org-variable-name">data</span> = umi.values.ravel()
-  plt.clf()
-  plt.hist(data[data &lt; grid.<span class="org-builtin">max</span>()], bins=grid, color=<span class="org-string">'k'</span>)
-  plt.plot(grid[1:] - 0.5, expected_counts, c=<span class="org-string">'r'</span>)
-  plt.xticks(grid)
-  plt.xlabel(<span class="org-string">'UMI count'</span>)
-  plt.ylabel(<span class="org-string">'Frequency'</span>)
 </pre>
 </div>
 </div>
@@ -677,7 +620,6 @@ Check the goodness of fit.
 <div class="org-src-container">
 <pre class="src src-ipython"><span class="org-variable-name">mean</span> = pd.read_table(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/mean2.txt.gz'</span>, sep=<span class="org-string">' '</span>, index_col=0)
 <span class="org-variable-name">disp</span> = pd.read_table(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/dispersion2.txt.gz'</span>, sep=<span class="org-string">' '</span>, index_col=0)
-<span class="org-variable-name">size</span> = umi.agg(np.<span class="org-builtin">sum</span>)
 </pre>
 </div>
 
@@ -708,18 +650,6 @@ to find some genes which depart even more from uniform quantiles.
 
 <div class="figure">
 <p><img src="figure/zinb.org/nb-quantiles-dist.png" alt="nb-quantiles-dist.png">
-</p>
-</div>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span class="org-variable-name">grid</span> = np.arange(14)
-plot_fit(umi, expected_counts(umi, mean, disp, size, onehot, grid), grid)
-</pre>
-</div>
-
-
-<div class="figure">
-<p><img src="figure/zinb.org/nb-hist.png" alt="nb-hist.png">
 </p>
 </div>
 </div>
@@ -815,26 +745,13 @@ Plot the data and fitted distribution.
 </div>
 
 <div class="org-src-container">
-<pre class="src src-ipython">diagnostic_quantiles(umi, zi2_mean, zi2_disp, size, onehot, zi2_dropout)
+<pre class="src src-ipython">diagnostic_quantiles(umi, zi2_mean, zi2_disp, size, onehot, ind_dropout=zi2_dropout)
 </pre>
 </div>
 
 
 <div class="figure">
-<p><img src="figure/zinb.org/zinb-diagnostic.png" alt="zinb-diagnostic.png">
-</p>
-</div>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span class="org-variable-name">grid</span> = np.arange(14)
-<span class="org-variable-name">exp_counts</span> = expected_counts(umi, zi2_mean, zi2_disp, size, onehot, grid)
-plot_fit(umi, exp_counts, grid)
-</pre>
-</div>
-
-
-<div class="figure">
-<p><img src="figure/zinb.org/zinb-hist.png" alt="zinb-hist.png">
+<p><img src="figure/zinb.org/zinb2-diagnostic.png" alt="zinb2-diagnostic.png">
 </p>
 </div>
 </div>
@@ -842,7 +759,7 @@ plot_fit(umi, exp_counts, grid)
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2018-02-15 Thu 10:41</p>
+<p class="date">Created: 2018-02-15 Thu 17:00</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>

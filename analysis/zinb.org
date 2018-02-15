@@ -12,9 +12,10 @@
   analyses:
 
   1. [[*Tensorflow implementation][We implement GPU-based]] maximum likelihood estimation of the parameters
-  2. [[*Histogram diagnostic plot][We develop visual diagnostics]] of the fitted models to check goodness of fit
+  2. [[*Quantile-quantile diagnostic plot][We develop visual diagnostics]] of the fitted models to check goodness of fit
   3. [[*Fit NB][We fit a model without dropout]] and show it does not fit the data
   4. [[*Fit ZINB][We fit a model assuming dropout per gene]]
+  5. [[*Fit ZINB2][We fit a model assumint dropout per individual per gene]]
 
 * Model specification
 
@@ -68,18 +69,19 @@
   #+CALL: ipython3(memory="16G",venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 43294342
+  : Submitted batch job 43316092
 
   #+NAME: zinb-imports
   #+BEGIN_SRC ipython
     import numpy as np
     import pandas as pd
     import scipy.stats as st
+    import scipy.special as sp
   #+END_SRC
 
   #+RESULTS: zinb-imports
   :RESULTS:
-  # Out[1]:
+  # Out[12]:
   :END:
 
   #+BEGIN_SRC ipython
@@ -134,6 +136,17 @@
   # Out[3]:
   :END:
 
+  Compute size factors.
+
+  #+BEGIN_SRC ipython
+    size = umi.agg(np.sum)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[10]:
+  :END:
+
   Onehot-encode the samples.
 
   #+NAME: onehot-qc
@@ -164,7 +177,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[32]:
+  # Out[5]:
   :END:
 
 * Dask implementation                                              :noexport:
@@ -436,19 +449,21 @@
   \(\hat{G}_{ijk}(r_{ijk})\) should be uniform.
 
   #+BEGIN_SRC ipython
-    def estimated_cdf(x, mean, disp, size, onehot, dropout=None):
+    def estimated_cdf(x, mean, disp, size, onehot, gene_dropout=None, ind_dropout=None):
       n = onehot.dot(np.exp(-disp.values.T) + 1e-8)
       p = 1 / (1 + size.to_frame().values * onehot.dot(np.exp(mean.values + disp.values).T))
       assert (n.values > 0).all()
       assert (p.values >= 0).all()
       assert (p.values <= 1).all()
       G = st.nbinom(n=n, p=p).cdf(x)
-      if dropout is not None:
-        G = sp.expit(-dropout.values.T) * G + sp.expit(dropout.values.T)
+      if gene_dropout is not None:
+        G = sp.expit(-gene_dropout.values.T) * G + sp.expit(gene_dropout.values.T)
+      elif ind_dropout is not None:
+        G = onehot.dot(sp.expit(-ind_dropout.values.T)) * G + onehot.dot(sp.expit(ind_dropout.values.T))
       return G
 
-    def diagnostic(umi, mean, disp, size, onehot, dropout=None):
-      q = estimated_cdf(umi.values.T, mean, disp, size, onehot, dropout=dropout)
+    def diagnostic(umi, mean, disp, size, onehot, **kwargs):
+      q = estimated_cdf(umi.values.T, mean, disp, size, onehot, **kwargs)
       plt.clf()
       plt.scatter(x=np.linspace(0, 1, q.shape[0]),
                   y=sorted(q.ravel()),
@@ -461,19 +476,19 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[62]:
+  # Out[14]:
   :END:
 
   Look at the quantiles of the QQ plots over all genes:
 
   #+BEGIN_SRC ipython
-    def diagnostic_quantiles(umi, mean, disp, size, onehot, dropout=None, quantiles=None):
+    def diagnostic_quantiles(umi, mean, disp, size, onehot, quantiles=None, **kwargs):
       if quantiles is None:
         quantiles = np.array([.05, .25, .5, .75, .95])
       else:
         quantiles = np.array(quantiles)
         assert (0 <= quantiles <= 1).all()
-      cdf = np.sort(estimated_cdf(umi.values.T, mean, disp, size, onehot, dropout=dropout).T)
+      cdf = np.sort(estimated_cdf(umi.values.T, mean, disp, size, onehot, **kwargs).T)
       cdf_quantiles = np.percentile(cdf, 100 * quantiles, interpolation='higher', axis=0)
 
       plt.clf()
@@ -487,70 +502,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[56]:
-  :END:
-
-* Histogram diagnostic plot
-
-  The challenge in visualizing the fitted distributions is that the
-  observations \(r_{ijk}\) are not drawn iid. from a distribution
-  \(g_{ik}(\cdot)\). 
-
-  Instead, we have \(r_{ijk} \sim g_{ijk}(\cdot)\), and we have used maximum
-  likelihood to estimate distributions \(\hat{g}_{ijk}\).
-
-  Plot the expected number of draws from \(\bar{g}\), assuming the number of
-  draws in the interval \([a, b]\) is \(\mathrm{Bin}(N, \bar{G}(b) -
-  \bar{G}(a))\), where \(N\) is the total number of observations and
-  \(\bar{G}\) is the average CDF:
-
-  \[ \bar{G}(x) = \frac{1}{N} \sum_{i,j,k} \hat{G}_{ijk}(x) \]
-
-  The data distribution has an extremely long tail, so truncate it to make the
-  majority of the fit easier to see:
-
-  #+BEGIN_SRC ipython
-    query = (pd.Series([50, 75, 90, 95, 99])
-             .apply(lambda x: np.percentile(umi.values.ravel(), x))
-             .to_frame()
-             .rename_axis('Percentile', axis='index'))
-    query.columns = ['UMI']
-    query
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[24]:
-  #+BEGIN_EXAMPLE
-    UMI
-    Percentile
-    0            1.0
-    1            3.0
-    2            8.0
-    3           14.0
-    4           49.0
-  #+END_EXAMPLE
-  :END:
-
-  #+BEGIN_SRC ipython
-    def expected_counts(umi, mean, disp, size, onehot, grid):
-      data = umi.values.ravel()
-      average_cdf = [np.mean(estimated_cdf(g, mean, disp, size, onehot)) for g in grid]
-      return data.shape[0] * np.diff(average_cdf)
-
-    def plot_fit(umi, expected_counts, grid):
-      data = umi.values.ravel()
-      plt.clf()
-      plt.hist(data[data < grid.max()], bins=grid, color='k')
-      plt.plot(grid[1:] - 0.5, expected_counts, c='r')
-      plt.xticks(grid)
-      plt.xlabel('UMI count')
-      plt.ylabel('Frequency')
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[7]:
+  # Out[15]:
   :END:
 
 * Fit NB
@@ -602,7 +554,6 @@
   #+BEGIN_SRC ipython
     mean = pd.read_table('/scratch/midway2/aksarkar/singlecell/mean2.txt.gz', sep=' ', index_col=0)
     disp = pd.read_table('/scratch/midway2/aksarkar/singlecell/dispersion2.txt.gz', sep=' ', index_col=0)
-    size = umi.agg(np.sum)
   #+END_SRC
 
   #+RESULTS:
@@ -634,17 +585,6 @@
   :RESULTS:
   # Out[61]:
   [[file:figure/zinb.org/nb-quantiles-dist.png]]
-  :END:
-
-  #+BEGIN_SRC ipython :async t :ipyfile figure/zinb.org/nb-hist.png
-    grid = np.arange(14)
-    plot_fit(umi, expected_counts(umi, mean, disp, size, onehot, grid), grid)
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[19]:
-  [[file:figure/zinb.org/nb-hist.png]]
   :END:
 
 * Fit ZINB
@@ -747,14 +687,14 @@
   : Submitted batch job 43299007
 
   #+BEGIN_SRC sh :exports none
-    sacct -j 43244664 -o Elapsed,MaxRSS
+    sacct -j 43299007 -o Elapsed,MaxRSS
   #+END_SRC
 
   #+RESULTS:
   |    Elapsed | MaxRSS     |
   | ---------- | ---------- |
-  |   01:22:34 |            |
-  |   01:22:34 | 4851740K   |
+  |   01:22:47 |            |
+  |   01:22:47 | 6317612K   |
 
   Plot the data and fitted distribution.
 
@@ -766,27 +706,15 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[21]:
+  # Out[8]:
   :END:
 
   #+BEGIN_SRC ipython :ipyfile figure/zinb.org/zinb2-diagnostic.png
-    diagnostic_quantiles(umi, zi2_mean, zi2_disp, size, onehot, zi2_dropout)
+    diagnostic_quantiles(umi, zi2_mean, zi2_disp, size, onehot, ind_dropout=zi2_dropout)
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[44]:
-  [[file:figure/zinb.org/zinb-diagnostic.png]]
-  :END:
-
-  #+BEGIN_SRC ipython :async t :ipyfile figure/zinb.org/zinb2-hist.png
-    grid = np.arange(14)
-    exp_counts = expected_counts(umi, zi2_mean, zi2_disp, size, onehot, grid)
-    plot_fit(umi, exp_counts, grid)
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[22]:
-  [[file:figure/zinb.org/zinb-hist.png]]
+  # Out[16]:
+  [[file:figure/zinb.org/zinb2-diagnostic.png]]
   :END:
