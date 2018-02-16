@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2018-02-15 Thu 17:00 -->
+<!-- 2018-02-16 Fri 11:10 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mean/dispersion estimation</title>
@@ -276,7 +276,7 @@ analyses:
 <li><a href="#orge3a2968">We develop visual diagnostics</a> of the fitted models to check goodness of fit</li>
 <li><a href="#orge17e562">We fit a model without dropout</a> and show it does not fit the data</li>
 <li><a href="#org3c6170a">We fit a model assuming dropout per gene</a></li>
-<li><a href="#org72d12f4">We fit a model assumint dropout per individual per gene</a></li>
+<li><a href="#org72d12f4">We fit a model assuming dropout per individual per gene</a></li>
 </ol>
 </div>
 </div>
@@ -536,6 +536,13 @@ We can use an idea from <code>ashr</code>: Let \(\hat{G}_{ijk}\) denote the CDF 
 \(\hat{G}_{ijk}(r_{ijk})\) should be uniform.
 </p>
 
+<p>
+In the case of dropout, the PDF has a point mass at zero of size \(\pi\) and
+therefore the distribution of values of the CDF is no longer uniform. To
+handle this, plot randomized quantiles \(\tilde{G}_{ijk}(r_{ijk}) =
+  \hat{G}_{ijk}(r_{ijk}) + \pi U\), where \(U \sim \mathrm{Unif}(0, 1)\).
+</p>
+
 <div class="org-src-container">
 <pre class="src src-ipython"><span class="org-keyword">def</span> <span class="org-function-name">estimated_cdf</span>(x, mean, disp, size, onehot, gene_dropout=<span class="org-constant">None</span>, ind_dropout=<span class="org-constant">None</span>):
   <span class="org-variable-name">n</span> = onehot.dot(np.exp(-disp.values.T) + 1e-8)
@@ -545,9 +552,9 @@ We can use an idea from <code>ashr</code>: Let \(\hat{G}_{ijk}\) denote the CDF 
   <span class="org-keyword">assert</span> (p.values &lt;= 1).<span class="org-builtin">all</span>()
   <span class="org-variable-name">G</span> = st.nbinom(n=n, p=p).cdf(x)
   <span class="org-keyword">if</span> gene_dropout <span class="org-keyword">is</span> <span class="org-keyword">not</span> <span class="org-constant">None</span>:
-    <span class="org-variable-name">G</span> = sp.expit(-gene_dropout.values.T) * G + sp.expit(gene_dropout.values.T)
+    <span class="org-variable-name">G</span> += np.random.uniform(size=G.shape) * sp.expit(gene_dropout.values.T)
   <span class="org-keyword">elif</span> ind_dropout <span class="org-keyword">is</span> <span class="org-keyword">not</span> <span class="org-constant">None</span>:
-    <span class="org-variable-name">G</span> = onehot.dot(sp.expit(-ind_dropout.values.T)) * G + onehot.dot(sp.expit(ind_dropout.values.T))
+    <span class="org-variable-name">G</span> += np.random.uniform(size=G.shape) * onehot.dot(sp.expit(ind_dropout.values.T))
   <span class="org-keyword">return</span> G
 
 <span class="org-keyword">def</span> <span class="org-function-name">diagnostic</span>(umi, mean, disp, size, onehot, **kwargs):
@@ -693,7 +700,7 @@ Plot the diagnostic for the model.
 </div>
 
 <div class="org-src-container">
-<pre class="src src-ipython">diagnostic_quantiles(umi, zi_mean, zi_disp, size, onehot, zi_dropout)
+<pre class="src src-ipython">diagnostic_quantiles(umi, zi_mean, zi_disp, size, onehot, gene_dropout=zi_dropout)
 </pre>
 </div>
 
@@ -759,7 +766,7 @@ Plot the data and fitted distribution.
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2018-02-15 Thu 17:00</p>
+<p class="date">Created: 2018-02-16 Fri 11:10</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>

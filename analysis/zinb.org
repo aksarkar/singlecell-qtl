@@ -15,7 +15,7 @@
   2. [[*Quantile-quantile diagnostic plot][We develop visual diagnostics]] of the fitted models to check goodness of fit
   3. [[*Fit NB][We fit a model without dropout]] and show it does not fit the data
   4. [[*Fit ZINB][We fit a model assuming dropout per gene]]
-  5. [[*Fit ZINB2][We fit a model assumint dropout per individual per gene]]
+  5. [[*Fit ZINB2][We fit a model assuming dropout per individual per gene]]
 
 * Model specification
 
@@ -69,7 +69,7 @@
   #+CALL: ipython3(memory="16G",venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 43316092
+  : Submitted batch job 43362111
 
   #+NAME: zinb-imports
   #+BEGIN_SRC ipython
@@ -81,7 +81,7 @@
 
   #+RESULTS: zinb-imports
   :RESULTS:
-  # Out[12]:
+  # Out[1]:
   :END:
 
   #+BEGIN_SRC ipython
@@ -144,7 +144,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[10]:
+  # Out[4]:
   :END:
 
   Onehot-encode the samples.
@@ -160,7 +160,7 @@
 
   #+RESULTS: onehot-qc
   :RESULTS:
-  # Out[4]:
+  # Out[5]:
   : (4985, 54)
   :END:
 
@@ -448,6 +448,11 @@
   \(\hat{g}_{ijk}\). Then, the distribution of values
   \(\hat{G}_{ijk}(r_{ijk})\) should be uniform.
 
+  In the case of dropout, the PDF has a point mass at zero of size \(\pi\) and
+  therefore the distribution of values of the CDF is no longer uniform. To
+  handle this, plot randomized quantiles \(\tilde{G}_{ijk}(r_{ijk}) =
+  \hat{G}_{ijk}(r_{ijk}) + \pi U\), where \(U \sim \mathrm{Unif}(0, 1)\).
+
   #+BEGIN_SRC ipython
     def estimated_cdf(x, mean, disp, size, onehot, gene_dropout=None, ind_dropout=None):
       n = onehot.dot(np.exp(-disp.values.T) + 1e-8)
@@ -457,9 +462,9 @@
       assert (p.values <= 1).all()
       G = st.nbinom(n=n, p=p).cdf(x)
       if gene_dropout is not None:
-        G = sp.expit(-gene_dropout.values.T) * G + sp.expit(gene_dropout.values.T)
+        G += np.random.uniform(size=G.shape) * sp.expit(gene_dropout.values.T)
       elif ind_dropout is not None:
-        G = onehot.dot(sp.expit(-ind_dropout.values.T)) * G + onehot.dot(sp.expit(ind_dropout.values.T))
+        G += np.random.uniform(size=G.shape) * onehot.dot(sp.expit(ind_dropout.values.T))
       return G
 
     def diagnostic(umi, mean, disp, size, onehot, **kwargs):
@@ -476,7 +481,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[14]:
+  # Out[20]:
   :END:
 
   Look at the quantiles of the QQ plots over all genes:
@@ -502,7 +507,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[15]:
+  # Out[7]:
   :END:
 
 * Fit NB
@@ -643,12 +648,12 @@
   :END:
 
   #+BEGIN_SRC ipython :ipyfile figure/zinb.org/zinb-diagnostic.png
-    diagnostic_quantiles(umi, zi_mean, zi_disp, size, onehot, zi_dropout)
+    diagnostic_quantiles(umi, zi_mean, zi_disp, size, onehot, gene_dropout=zi_dropout)
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[63]:
+  # Out[22]:
   [[file:figure/zinb.org/zinb-diagnostic.png]]
   :END:
 
@@ -706,7 +711,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[8]:
+  # Out[24]:
   :END:
 
   #+BEGIN_SRC ipython :ipyfile figure/zinb.org/zinb2-diagnostic.png
@@ -715,6 +720,6 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[16]:
+  # Out[25]:
   [[file:figure/zinb.org/zinb2-diagnostic.png]]
   :END:
