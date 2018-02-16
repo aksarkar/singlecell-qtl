@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2018-02-16 Fri 11:10 -->
+<!-- 2018-02-16 Fri 12:10 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mean/dispersion estimation</title>
@@ -552,9 +552,12 @@ handle this, plot randomized quantiles \(\tilde{G}_{ijk}(r_{ijk}) =
   <span class="org-keyword">assert</span> (p.values &lt;= 1).<span class="org-builtin">all</span>()
   <span class="org-variable-name">G</span> = st.nbinom(n=n, p=p).cdf(x)
   <span class="org-keyword">if</span> gene_dropout <span class="org-keyword">is</span> <span class="org-keyword">not</span> <span class="org-constant">None</span>:
+    <span class="org-variable-name">G</span> *= sp.expit(-gene_dropout.values.T)
     <span class="org-variable-name">G</span> += np.random.uniform(size=G.shape) * sp.expit(gene_dropout.values.T)
   <span class="org-keyword">elif</span> ind_dropout <span class="org-keyword">is</span> <span class="org-keyword">not</span> <span class="org-constant">None</span>:
+    <span class="org-variable-name">G</span> *= onehot.dot(sp.expit(-ind_dropout.values.T))
     <span class="org-variable-name">G</span> += np.random.uniform(size=G.shape) * onehot.dot(sp.expit(ind_dropout.values.T))
+  <span class="org-keyword">assert</span> (G &lt;= 1).<span class="org-builtin">all</span>()
   <span class="org-keyword">return</span> G
 
 <span class="org-keyword">def</span> <span class="org-function-name">diagnostic</span>(umi, mean, disp, size, onehot, **kwargs):
@@ -766,7 +769,7 @@ Plot the data and fitted distribution.
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2018-02-16 Fri 11:10</p>
+<p class="date">Created: 2018-02-16 Fri 12:10</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>

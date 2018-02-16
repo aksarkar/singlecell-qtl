@@ -462,9 +462,12 @@
       assert (p.values <= 1).all()
       G = st.nbinom(n=n, p=p).cdf(x)
       if gene_dropout is not None:
+        G *= sp.expit(-gene_dropout.values.T)
         G += np.random.uniform(size=G.shape) * sp.expit(gene_dropout.values.T)
       elif ind_dropout is not None:
+        G *= onehot.dot(sp.expit(-ind_dropout.values.T))
         G += np.random.uniform(size=G.shape) * onehot.dot(sp.expit(ind_dropout.values.T))
+      assert (G <= 1).all()
       return G
 
     def diagnostic(umi, mean, disp, size, onehot, **kwargs):
@@ -481,7 +484,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[20]:
+  # Out[57]:
   :END:
 
   Look at the quantiles of the QQ plots over all genes:
@@ -653,7 +656,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[22]:
+  # Out[63]:
   [[file:figure/zinb.org/zinb-diagnostic.png]]
   :END:
 
@@ -720,6 +723,6 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[25]:
+  # Out[64]:
   [[file:figure/zinb.org/zinb2-diagnostic.png]]
   :END:
