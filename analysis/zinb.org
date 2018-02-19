@@ -69,7 +69,7 @@
   #+CALL: ipython3(memory="16G",venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 43362111
+  : Submitted batch job 43487308
 
   #+NAME: zinb-imports
   #+BEGIN_SRC ipython
@@ -92,7 +92,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[2]:
+  # Out[5]:
   :END:
 
   #+NAME: tf-imports
@@ -133,7 +133,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[3]:
+  # Out[4]:
   :END:
 
   Compute size factors.
@@ -144,7 +144,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[4]:
+  # Out[5]:
   :END:
 
   Onehot-encode the samples.
@@ -160,7 +160,7 @@
 
   #+RESULTS: onehot-qc
   :RESULTS:
-  # Out[5]:
+  # Out[6]:
   : (4985, 54)
   :END:
 
@@ -444,14 +444,66 @@
   Instead, we have \(r_{ijk} \sim g_{ijk}(\cdot)\), and we have used maximum
   likelihood to estimate distributions \(\hat{g}_{ijk}\).
 
-  We can use an idea from ~ashr~: Let \(\hat{G}_{ijk}\) denote the CDF of
-  \(\hat{g}_{ijk}\). Then, the distribution of values
-  \(\hat{G}_{ijk}(r_{ijk})\) should be uniform.
+  We can use the probability integral transform to develop a diagnostic (as in
+  ~ashr~): Let \(\hat{G}_{ijk}\) denote the CDF of \(\hat{g}_{ijk}\). Then, the
+  distribution of values \(\hat{G}_{ijk}(r_{ijk})\) should be uniform.
 
-  In the case of dropout, the PDF has a point mass at zero of size \(\pi\) and
-  therefore the distribution of values of the CDF is no longer uniform. To
-  handle this, plot randomized quantiles \(\tilde{G}_{ijk}(r_{ijk}) =
-  \hat{G}_{ijk}(r_{ijk}) + \pi U\), where \(U \sim \mathrm{Unif}(0, 1)\).
+  In the case of modeling dropout, the CDF is discontinuous due to the point
+  mass on zero, which we can observe using a point-normal mixture:
+
+  \[ x \sim \pi \delta(x) + (1 - \pi) N(0, 1) \]
+
+  \[ \Pr(X < x) = \pi 1_{x > 0} + (1 - \pi) \Phi(x) \]
+
+  #+BEGIN_SRC ipython
+    N = 1000
+    G = st.norm()
+    observations = G.rvs(size=N) * (np.random.uniform(size=N) < 0.5)
+    quantiles = .5 * (observations > 0) + .5 * G.cdf(observations)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[3]:
+  :END:
+
+  #+BEGIN_SRC ipython :ipyfile figure/zinb.org/point-normal-cdf.png
+    plt.clf()
+    plt.hist(quantiles, bins=50, color='k')
+    plt.xlabel('Estimated quantile')
+    _ = plt.ylabel('Number of observations')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[6]:
+  [[file:figure/zinb.org/point-normal-cdf.png]]
+  :END:
+
+  In this case, we can instead compute a randomized quantile, which will be
+  uniform in expectation.
+
+  #+BEGIN_SRC ipython
+    rand_quantiles = G.cdf(observations) + np.random.uniform(size=N) * np.isclose(observations, 0)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[7]:
+  :END:
+
+  #+BEGIN_SRC ipython :ipyfile figure/zinb.org/point-normal-diagnostic.png
+    plt.clf()
+    plt.hist(rand_quantiles, color='k', bins=50)
+    plt.xlabel('Estimated quantile')
+    _ = plt.ylabel('Number of observations')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[12]:
+  [[file:figure/zinb.org/point-normal-diagnostic.png]]
+  :END:
 
   #+BEGIN_SRC ipython
     def estimated_cdf(x, mean, disp, size, onehot, gene_dropout=None, ind_dropout=None):
@@ -463,10 +515,10 @@
       G = st.nbinom(n=n, p=p).cdf(x)
       if gene_dropout is not None:
         G *= sp.expit(-gene_dropout.values.T)
-        G += np.random.uniform(size=G.shape) * sp.expit(gene_dropout.values.T)
+        G += sp.expit(gene_dropout.values.T)
       elif ind_dropout is not None:
         G *= onehot.dot(sp.expit(-ind_dropout.values.T))
-        G += np.random.uniform(size=G.shape) * onehot.dot(sp.expit(ind_dropout.values.T))
+        G += onehot.dot(sp.expit(ind_dropout.values.T))
       assert (G <= 1).all()
       return G
 
@@ -484,7 +536,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[57]:
+  # Out[16]:
   :END:
 
   Look at the quantiles of the QQ plots over all genes:
@@ -510,7 +562,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[7]:
+  # Out[12]:
   :END:
 
 * Fit NB
@@ -647,7 +699,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[8]:
+  # Out[9]:
   :END:
 
   #+BEGIN_SRC ipython :ipyfile figure/zinb.org/zinb-diagnostic.png
@@ -656,7 +708,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[63]:
+  # Out[20]:
   [[file:figure/zinb.org/zinb-diagnostic.png]]
   :END:
 
@@ -714,7 +766,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[24]:
+  # Out[21]:
   :END:
 
   #+BEGIN_SRC ipython :ipyfile figure/zinb.org/zinb2-diagnostic.png
@@ -723,6 +775,6 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[64]:
+  # Out[22]:
   [[file:figure/zinb.org/zinb2-diagnostic.png]]
   :END:

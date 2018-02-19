@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2018-02-16 Fri 12:10 -->
+<!-- 2018-02-18 Sun 19:06 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mean/dispersion estimation</title>
@@ -254,9 +254,9 @@ for the JavaScript code in this tag.
 <div id="content">
 <h1 class="title">Mean/dispersion estimation</h1>
 
-<div id="outline-container-org6af1f01" class="outline-2">
-<h2 id="org6af1f01">Introduction</h2>
-<div class="outline-text-2" id="text-org6af1f01">
+<div id="outline-container-orgbddc3b7" class="outline-2">
+<h2 id="orgbddc3b7">Introduction</h2>
+<div class="outline-text-2" id="text-orgbddc3b7">
 <p>
 The simplest approach to call mean/variance QTLs is modular:
 </p>
@@ -272,18 +272,18 @@ analyses:
 </p>
 
 <ol class="org-ol">
-<li><a href="#org428aa93">We implement GPU-based</a> maximum likelihood estimation of the parameters</li>
+<li><a href="#org269d03c">We implement GPU-based</a> maximum likelihood estimation of the parameters</li>
 <li><a href="#orge3a2968">We develop visual diagnostics</a> of the fitted models to check goodness of fit</li>
-<li><a href="#orge17e562">We fit a model without dropout</a> and show it does not fit the data</li>
-<li><a href="#org3c6170a">We fit a model assuming dropout per gene</a></li>
-<li><a href="#org72d12f4">We fit a model assuming dropout per individual per gene</a></li>
+<li><a href="#org1429fd2">We fit a model without dropout</a> and show it does not fit the data</li>
+<li><a href="#orga8ab6f4">We fit a model assuming dropout per gene</a></li>
+<li><a href="#org1986c5b">We fit a model assuming dropout per individual per gene</a></li>
 </ol>
 </div>
 </div>
 
-<div id="outline-container-orgad32fb3" class="outline-2">
-<h2 id="orgad32fb3">Model specification</h2>
-<div class="outline-text-2" id="text-orgad32fb3">
+<div id="outline-container-orge096f85" class="outline-2">
+<h2 id="orge096f85">Model specification</h2>
+<div class="outline-text-2" id="text-orge096f85">
 <p>
 Let \(r_{ijk}\) denote the number of molecules for individual \(i\), cell
 \(j\), gene \(k\). Let \(R_{ij}\) denote a size factor for each cell. As a
@@ -347,9 +347,9 @@ Then, the log-likelihood of the data is:
 </div>
 </div>
 
-<div id="outline-container-orgde19fe3" class="outline-2">
-<h2 id="orgde19fe3">Read the data</h2>
-<div class="outline-text-2" id="text-orgde19fe3">
+<div id="outline-container-orga83ce40" class="outline-2">
+<h2 id="orga83ce40">Read the data</h2>
+<div class="outline-text-2" id="text-orga83ce40">
 <p>
 Read the QC'ed data.
 </p>
@@ -368,7 +368,7 @@ Onehot-encode the samples.
 </p>
 
 <div class="org-src-container">
-<pre class="src src-ipython" id="org5400cb3"><span class="org-variable-name">individuals</span> = <span class="org-builtin">sorted</span>(annotations[<span class="org-string">'chip_id'</span>].unique())
+<pre class="src src-ipython" id="org9e8be09"><span class="org-variable-name">individuals</span> = <span class="org-builtin">sorted</span>(annotations[<span class="org-string">'chip_id'</span>].unique())
 <span class="org-variable-name">onehot</span> = np.zeros((umi.shape[1], <span class="org-builtin">len</span>(individuals)), dtype=np.float32)
 onehot[np.arange(onehot.shape[0]),annotations[<span class="org-string">'chip_id'</span>].<span class="org-builtin">apply</span>(<span class="org-keyword">lambda</span> x: individuals.index(x))] = 1
 <span class="org-variable-name">onehot</span> = pd.DataFrame(onehot, columns=individuals, index=umi.columns)
@@ -397,9 +397,9 @@ Check that one-hot encoding is OK:
 </div>
 </div>
 
-<div id="outline-container-org428aa93" class="outline-2">
-<h2 id="org428aa93">Tensorflow implementation</h2>
-<div class="outline-text-2" id="text-org428aa93">
+<div id="outline-container-org269d03c" class="outline-2">
+<h2 id="org269d03c">Tensorflow implementation</h2>
+<div class="outline-text-2" id="text-org269d03c">
 <p>
 We optimize all of the parameters together, using one-hot encoding to map
 parameters to data points. This makes inference more amenable to running on
@@ -414,7 +414,7 @@ perform gradient descent.
 </p>
 
 <div class="org-src-container">
-<pre class="src src-ipython" id="org1fa0c3a"><span class="org-keyword">def</span> <span class="org-function-name">sigmoid</span>(x):
+<pre class="src src-ipython" id="org9a4aea9"><span class="org-keyword">def</span> <span class="org-function-name">sigmoid</span>(x):
   <span class="org-doc">"""Numerically safe sigmoid"""</span>
   <span class="org-keyword">return</span> tf.clip_by_value(tf.sigmoid(x), -13, 13)
 
@@ -531,17 +531,69 @@ likelihood to estimate distributions \(\hat{g}_{ijk}\).
 </p>
 
 <p>
-We can use an idea from <code>ashr</code>: Let \(\hat{G}_{ijk}\) denote the CDF of
-\(\hat{g}_{ijk}\). Then, the distribution of values
-\(\hat{G}_{ijk}(r_{ijk})\) should be uniform.
+We can use the probability integral transform to develop a diagnostic (as in
+<code>ashr</code>): Let \(\hat{G}_{ijk}\) denote the CDF of \(\hat{g}_{ijk}\). Then, the
+distribution of values \(\hat{G}_{ijk}(r_{ijk})\) should be uniform.
 </p>
 
 <p>
-In the case of dropout, the PDF has a point mass at zero of size \(\pi\) and
-therefore the distribution of values of the CDF is no longer uniform. To
-handle this, plot randomized quantiles \(\tilde{G}_{ijk}(r_{ijk}) =
-  \hat{G}_{ijk}(r_{ijk}) + \pi U\), where \(U \sim \mathrm{Unif}(0, 1)\).
+In the case of modeling dropout, the CDF is discontinuous due to the point
+mass on zero, which we can observe using a point-normal mixture:
 </p>
+
+<p>
+\[ x \sim \pi \delta(x) + (1 - \pi) N(0, 1) \]
+</p>
+
+<p>
+\[ \Pr(X < x) = \pi 1_{x > 0} + (1 - \pi) \Phi(x) \]
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">N</span> = 1000
+<span class="org-variable-name">G</span> = st.norm()
+<span class="org-variable-name">observations</span> = G.rvs(size=N) * (np.random.uniform(size=N) &lt; 0.5)
+<span class="org-variable-name">quantiles</span> = .5 * (observations &gt; 0) + .5 * G.cdf(observations)
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-ipython">plt.clf()
+plt.hist(quantiles, bins=50, color=<span class="org-string">'k'</span>)
+plt.xlabel(<span class="org-string">'Estimated quantile'</span>)
+<span class="org-variable-name">_</span> = plt.ylabel(<span class="org-string">'Number of observations'</span>)
+</pre>
+</div>
+
+
+<div class="figure">
+<p><img src="figure/zinb.org/point-normal-cdf.png" alt="point-normal-cdf.png">
+</p>
+</div>
+
+<p>
+In this case, we can instead compute a randomized quantile, which will be
+uniform in expectation.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">rand_quantiles</span> = G.cdf(observations) + np.random.uniform(size=N) * np.isclose(observations, 0)
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-ipython">plt.clf()
+plt.hist(rand_quantiles, color=<span class="org-string">'k'</span>, bins=50)
+plt.xlabel(<span class="org-string">'Estimated quantile'</span>)
+<span class="org-variable-name">_</span> = plt.ylabel(<span class="org-string">'Number of observations'</span>)
+</pre>
+</div>
+
+
+<div class="figure">
+<p><img src="figure/zinb.org/point-normal-diagnostic.png" alt="point-normal-diagnostic.png">
+</p>
+</div>
 
 <div class="org-src-container">
 <pre class="src src-ipython"><span class="org-keyword">def</span> <span class="org-function-name">estimated_cdf</span>(x, mean, disp, size, onehot, gene_dropout=<span class="org-constant">None</span>, ind_dropout=<span class="org-constant">None</span>):
@@ -553,10 +605,10 @@ handle this, plot randomized quantiles \(\tilde{G}_{ijk}(r_{ijk}) =
   <span class="org-variable-name">G</span> = st.nbinom(n=n, p=p).cdf(x)
   <span class="org-keyword">if</span> gene_dropout <span class="org-keyword">is</span> <span class="org-keyword">not</span> <span class="org-constant">None</span>:
     <span class="org-variable-name">G</span> *= sp.expit(-gene_dropout.values.T)
-    <span class="org-variable-name">G</span> += np.random.uniform(size=G.shape) * sp.expit(gene_dropout.values.T)
+    <span class="org-variable-name">G</span> += sp.expit(gene_dropout.values.T)
   <span class="org-keyword">elif</span> ind_dropout <span class="org-keyword">is</span> <span class="org-keyword">not</span> <span class="org-constant">None</span>:
     <span class="org-variable-name">G</span> *= onehot.dot(sp.expit(-ind_dropout.values.T))
-    <span class="org-variable-name">G</span> += np.random.uniform(size=G.shape) * onehot.dot(sp.expit(ind_dropout.values.T))
+    <span class="org-variable-name">G</span> += onehot.dot(sp.expit(ind_dropout.values.T))
   <span class="org-keyword">assert</span> (G &lt;= 1).<span class="org-builtin">all</span>()
   <span class="org-keyword">return</span> G
 
@@ -599,9 +651,9 @@ Look at the quantiles of the QQ plots over all genes:
 </div>
 </div>
 
-<div id="outline-container-orge17e562" class="outline-2">
-<h2 id="orge17e562">Fit NB</h2>
-<div class="outline-text-2" id="text-orge17e562">
+<div id="outline-container-org1429fd2" class="outline-2">
+<h2 id="org1429fd2">Fit NB</h2>
+<div class="outline-text-2" id="text-org1429fd2">
 <p>
 Estimate means and dispersions assuming no dropout.
 </p>
@@ -665,9 +717,9 @@ to find some genes which depart even more from uniform quantiles.
 </div>
 </div>
 
-<div id="outline-container-org3c6170a" class="outline-2">
-<h2 id="org3c6170a">Fit ZINB</h2>
-<div class="outline-text-2" id="text-org3c6170a">
+<div id="outline-container-orga8ab6f4" class="outline-2">
+<h2 id="orga8ab6f4">Fit ZINB</h2>
+<div class="outline-text-2" id="text-orga8ab6f4">
 <p>
 Estimate the parameters of the zero-inflated model assuming dropout per gene.
 </p>
@@ -715,9 +767,9 @@ Plot the diagnostic for the model.
 </div>
 </div>
 
-<div id="outline-container-org72d12f4" class="outline-2">
-<h2 id="org72d12f4">Fit ZINB2</h2>
-<div class="outline-text-2" id="text-org72d12f4">
+<div id="outline-container-org1986c5b" class="outline-2">
+<h2 id="org1986c5b">Fit ZINB2</h2>
+<div class="outline-text-2" id="text-org1986c5b">
 <p>
 Estimate the parameters of the zero-inflated model assuming dropout per
 individual and gene.
@@ -769,7 +821,7 @@ Plot the data and fitted distribution.
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2018-02-16 Fri 12:10</p>
+<p class="date">Created: 2018-02-18 Sun 19:06</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>
