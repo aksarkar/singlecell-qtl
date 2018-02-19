@@ -28,7 +28,7 @@
   #+CALL: ipython3(memory="4G", venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 42305236
+  : Submitted batch job 43417151
 
   #+BEGIN_SRC ipython
     import functools
@@ -83,21 +83,11 @@
                  .query('chr != "hsX"')
                  .query('chr != "hsY"')
                  .query('chr != "hsMT"'))
-    gene_info.head()
   #+END_SRC
 
   #+RESULTS: get-gene-info
   :RESULTS:
-  # Out[27]:
-  #+BEGIN_EXAMPLE
-    chr      start        end      name strand      source
-    gene
-    ENSG00000000419  hs20   49551404   49575092      DPM1      -  H. sapiens
-    ENSG00000000457   hs1  169818772  169863408     SCYL3      -  H. sapiens
-    ENSG00000000460   hs1  169631245  169823221  C1orf112      +  H. sapiens
-    ENSG00000000938   hs1   27938575   27961788       FGR      -  H. sapiens
-    ENSG00000000971   hs1  196621008  196716634       CFH      +  H. sapiens
-  #+END_EXAMPLE
+  # Out[33]:
   :END:
 
   #+NAME: write-pheno-def
@@ -187,7 +177,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[46]:
+  # Out[19]:
   :END:
 
   #+BEGIN_SRC ipython
@@ -196,7 +186,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[47]:
+  # Out[4]:
   :END:
 
   Apply the Benjamini-Hochberg procedure:
@@ -1805,30 +1795,18 @@
 
   #+BEGIN_SRC ipython
     def parse_bulk_qtl_record(row):
-      gene, transcript =  row['pid'].split('.')
-      id_, chr_, pos = row['dummy2'].split('.')
-      return pd.Series({'gene': gene, 'transcript': transcript, 'id': id_, 'chr': chr_, 'pos': pos, 'p_beta': row['bpval']})
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[175]:
-  :END:
-
-  #+BEGIN_SRC ipython
-    bulk_qtls = (pd.read_table('/project2/gilad/singlecell-qtl/bulk/permutations.all.RNAseq_run.fixed.txt.gz.bh.txt', sep=' ')
+      gene, _ = row[0].split('.')
+      id_, *_ = row[5].split('.')
+      return pd.Series({'gene': gene, 'id': id_, 'beta': row.iloc[-3], 'p_beta': row.iloc[-1]})
+    bulk_qtls = (pd.read_table('/project2/gilad/singlecell-qtl/bulk/permutations.all.RNAseq_run.fixed.txt.gz', sep=' ', header=None)
+                 .fillna('')
                  .apply(parse_bulk_qtl_record, axis=1))
   #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[177]:
-  :END:
 
   #+BEGIN_SRC ipython :results output html
     print(mean_qtls
           .merge(gene_info, left_on='gene', right_index=True)[['gene', 'name', 'id', 'beta', 'p_beta']]
-          .merge(bulk_qtls, on=['gene', 'id'], how='inner')[['gene', 'name', 'id', 'beta', 'p_beta_x', 'p_beta_y']]
+          .merge(bulk_qtls, on=['gene', 'id'], how='inner')[['gene', 'name', 'id', 'beta_x', 'beta_y', 'p_beta_x', 'p_beta_y']]
           .to_html(classes='table'))
   #+END_SRC
 
@@ -1841,7 +1819,8 @@
         <th>gene</th>
         <th>name</th>
         <th>id</th>
-        <th>beta</th>
+        <th>beta_x</th>
+        <th>beta_y</th>
         <th>p_beta_x</th>
         <th>p_beta_y</th>
       </tr>
@@ -1853,8 +1832,9 @@
         <td>SREK1IP1</td>
         <td>rs3756739</td>
         <td>-0.220404</td>
+        <td>-1.5344</td>
         <td>4.369600e-10</td>
-        <td>7.148420e-12</td>
+        <td>7.14842e-12</td>
       </tr>
       <tr>
         <th>1</th>
@@ -1862,8 +1842,9 @@
         <td>MTIF3</td>
         <td>rs7321650</td>
         <td>-0.204723</td>
+        <td>-1.1797</td>
         <td>1.336920e-08</td>
-        <td>2.713700e-13</td>
+        <td>2.7137e-13</td>
       </tr>
       <tr>
         <th>2</th>
@@ -1871,8 +1852,9 @@
         <td>C11orf48</td>
         <td>rs73502133</td>
         <td>-0.203695</td>
+        <td>-1.43647</td>
         <td>2.020100e-04</td>
-        <td>1.139940e-07</td>
+        <td>1.13994e-07</td>
       </tr>
       <tr>
         <th>3</th>
@@ -1880,12 +1862,63 @@
         <td>VASH2</td>
         <td>rs1692180</td>
         <td>0.208630</td>
+        <td>1.07843</td>
         <td>3.420450e-03</td>
-        <td>1.698820e-05</td>
+        <td>1.69882e-05</td>
+      </tr>
+      <tr>
+        <th>4</th>
+        <td>ENSG00000174498</td>
+        <td>IGDCC3</td>
+        <td>rs11855697</td>
+        <td>-0.134931</td>
+        <td>-0.514682</td>
+        <td>6.146570e-02</td>
+        <td>0.039672</td>
+      </tr>
+      <tr>
+        <th>5</th>
+        <td>ENSG00000196683</td>
+        <td>TOMM7</td>
+        <td>rs4394299</td>
+        <td>0.123889</td>
+        <td>0.555568</td>
+        <td>2.011060e-01</td>
+        <td>0.0212428</td>
+      </tr>
+      <tr>
+        <th>6</th>
+        <td>ENSG00000152332</td>
+        <td>UHMK1</td>
+        <td>rs149100</td>
+        <td>-0.186119</td>
+        <td>-0.401622</td>
+        <td>4.870400e-01</td>
+        <td>0.303696</td>
       </tr>
     </tbody>
   </table>
   #+END_EXPORT
+
+  Count how many genes have a SNP with an estimated effect size (regardless of
+  significance) in both single cell and bulk.
+
+  #+BEGIN_SRC ipython
+    joined = (mean_qtls.merge(bulk_qtls, on='gene', how='inner')[['gene', 'id_x', 'id_y', 'beta_x', 'beta_y']]
+              .fillna('')
+              .query('id_x != "" and id_y != ""'))
+    joined.shape[0]
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[47]:
+  : 5104
+  :END:
+
+  For genes which have a SNP with an estimated effect size in both single cell
+  and bulk (not necessarily the same), count how many times the signs of the
+  estimated effects are consistent with LD between the two SNPs.
 
 * Dispersion-QTL calling
 
