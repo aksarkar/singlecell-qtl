@@ -30,12 +30,18 @@
   #+RESULTS:
   : Submitted batch job 43417151
 
+  #+NAME: qtl-imports
   #+BEGIN_SRC ipython
-    import functools
     import os.path
     import numpy as np
+    import scipy.stats as st
     import pandas as pd
   #+END_SRC
+
+  #+RESULTS: qtl-imports
+  :RESULTS:
+  # Out[231]:
+  :END:
 
   #+RESULTS:
   :RESULTS:
@@ -1920,6 +1926,108 @@
   and bulk (not necessarily the same), count how many times the signs of the
   estimated effects are consistent with LD between the two SNPs.
 
+* Test bulk eQTLs in the single cell data
+
+  Read the estimated parameters (phenotypes) then center them.
+
+  #+BEGIN_SRC ipython
+    mean = (pd.read_table('/scratch/midway2/aksarkar/singlecell/zi2-mean.txt.gz', sep=' ', index_col=0)
+            .transform(lambda x: x - x.mean(), axis=1))
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[61]:
+  :END:
+
+  Read the bulk eQTLs (nominally significant).
+
+  #+BEGIN_SRC ipython
+    def parse_bulk_qtl_record(row):
+      gene, _ = row[0].split('.')
+      id_, *_ = row[5].split('.')
+      return pd.Series({'gene': gene, 'id': id_, 'beta': row.iloc[-3], 'p_beta': row.iloc[-1]})
+    bulk_qtls = (pd.read_table('/project2/gilad/singlecell-qtl/bulk/permutations.all.RNAseq_run.fixed.txt.gz', sep=' ', header=None)
+                 .fillna('')
+                 .apply(parse_bulk_qtl_record, axis=1))
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[42]:
+  :END:
+
+  Read the bulk eQTLs (significant by permutation test).
+
+  #+BEGIN_SRC ipython
+    def parse_perm_bulk_qtl_record(row):
+      gene, *_ = row[0].split('.')
+      id_, chr_, pos = row[1].split('.')
+      return pd.Series({'gene': gene, 'id': id_, 'chr': chr_, 'pos': pos, 'p_beta': row.iloc[-1]})
+    perm_bulk_qtls = (pd.read_table('/project2/gilad/singlecell-qtl/bulk/permutations.all.RNAseq_run.fixed.txt.gz.bh.txt', sep=' ', header=0)
+                      .apply(parse_perm_bulk_qtl_record, axis=1))
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[55]:
+  :END:
+
+  Test each bulk QTL-gene pair in the single cell data.
+
+  #+BEGIN_SRC ipython
+    def parse_vcf(record):
+      geno = np.ma.masked_equal([sum(float(h) for h in g.split('/')) if '.' not in g else -1 for g in record[9:]], -1)
+      geno -= geno.mean()
+      return pd.Series(geno.filled(0))
+
+    def extract_qtl_gene_pair(bulk_qtls, means):
+      Y, common_qtls = means.align(bulk_qtls.set_index('gene'), join='inner', axis=0)
+      header = pd.read_table('/project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz', skiprows=1, nrows=1, header=0)[9:]
+      genotypes = tabix.open('/project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz')
+      X = (common_qtls
+           .apply(lambda x: parse_vcf(next(genotypes.query(x['chr'], int(x['pos']) - 1, int(x['pos'])))), axis=1)
+           .rename(columns={i: ind for i, ind in enumerate(header.columns[9:])})
+           .align(Y, join='inner', axis=None)[0])
+      return X, Y
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[194]:
+  :END:
+
+  #+BEGIN_SRC ipython :async t
+    X, Y = extract_qtl_gene_pair(perm_bulk_qtls, mean)
+    result = []
+    _sf = st.chi2(1).sf
+    for (_, x), (name, y) in zip(X.iterrows(), Y.iterrows()):
+      beta, rss, *_ = np.linalg.lstsq(x.values.reshape(-1, 1), y.values.ravel(), rcond=None)
+      sigma2 = rss / y.shape[0]
+      se = sigma2 / np.inner(x.values, x.values)
+      pval = _sf(np.square(beta[0] / se))
+      result.append({'gene': name, 'beta': beta[0], 'p_sc': pval})
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[235]:
+  :END:
+
+  #+BEGIN_SRC ipython
+    merged = (bulk_qtls.merge(pd.DataFrame.from_dict(result), on='gene', suffixes=['_bulk', '_sc'])
+              .set_index('gene')
+              .sort_values('p_beta')
+              .reset_index(drop=True)[['id', 'p_beta', 'beta_bulk', 'p_sc', 'beta_sc']])
+    merged.to_csv('/home/aksarkar/projects/singlecell-qtl/data/zi2-mean-qtls.txt.gz', compression='gzip', sep=' ')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[241]:
+  :END:
+
+* Test single cell QTLs in the bulk data
 * Dispersion-QTL calling
 
   Read the estimated parameters and center them.
