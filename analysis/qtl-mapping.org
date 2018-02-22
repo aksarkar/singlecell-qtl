@@ -2027,6 +2027,15 @@
   # Out[241]:
   :END:
 
+  #+BEGIN_SRC ipython
+    X.to_csv('/home/aksarkar/projects/singlecell-qtl/data/bulk-qtl-genotypes.txt.gz', compression='gzip', sep=' ') 
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[243]:
+  :END:
+
 * Test single cell QTLs in the bulk data
 * Dispersion-QTL calling
 
