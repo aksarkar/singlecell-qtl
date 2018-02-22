@@ -1,34 +1,40 @@
-"""Single cell eQTL browser"""
+"""Single cell eQTL browser
 
+"""
+import bokeh.io
+import bokeh.layouts
+import bokeh.models
+import bokeh.plotting
 import numpy as np
 import pandas as pd
-import bokeh
 
-def plot_umi(source):
-  hist, edges = np.hist(source['umi'])
-  p = bokeh.plotting.figure()
-  p.quad(top=hist, bottom=0, left=edges[:-1], right=edges[1:])
-  return p
+gene_info = (pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/scqtl-genes.txt.gz')
+             .set_index('gene')
+             .query('source == "H. sapiens"')
+             .query('chr != "hsX"')
+             .query('chr != "hsY"')
+             .query('chr != "hsMT"'))
+means = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zi2-mean.txt.gz', index_col='gene', sep=' ')
+genotypes = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/bulk-qtl-genotypes.txt.gz', index_col='gene', sep=' ')
+gene = genotypes.iloc[0].name
 
-# umi = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/scqtl-counts.txt.gz', index_col=0)
-# annotations = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/scqtl-annotation.txt')
-# keep_samples = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/quality-single-cells.txt', index_col=0, header=None)
-# keep_genes = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/genes-pass-filter.txt', index_col=0, header=None)
-# umi = umi.loc[keep_genes.values.ravel(),keep_samples.values.ravel()]
-# annotations = annotations.loc[keep_samples.values.ravel()]
+g, m = genotypes.loc[gene].align(means.loc[gene], join='inner')
+sc_mean_by_geno = bokeh.plotting.figure(title=gene_info.loc[gene]['name'], width=600, height=400, tools=[])
+sc_mean_by_geno.scatter(x=g.values, y=m.values, size=8)
+sc_mean_by_geno.xaxis.axis_label = 'Centered genotype'
+sc_mean_by_geno.yaxis.axis_label = 'Estimated single cell mean expression'
 
-# onehot = np.zeros((annotations.shape[0], len(categories)), dtype=np.float32)
-# onehot[np.arange(onehot.shape[0]), annotations[key].apply(lambda x: categories.index(x))] = 1
+bulk = (pd.read_table('/project2/gilad/singlecell-qtl/bulk/counts_RNAseq_iPSC.txt', sep=' ', index_col='gene')
+        .rename(index=lambda x: x.split('.')[0], columns=lambda x: 'NA{}'.format(x))
+        .align(means, axis=None)[0])
+bulk /= bulk.sum(axis=0)
+bulk_mean_by_geno = bokeh.plotting.figure(title=gene_info.loc[gene]['name'], width=600, height=400, tools=[])
+bulk_mean_by_geno.scatter(x=genotypes.loc[gene].values, y=bulk.loc[gene].values, size=8)
+bulk_mean_by_geno.xaxis.axis_label = 'Centered genotype'
+bulk_mean_by_geno.yaxis.axis_label = 'Bulk CPM'
 
-# qtls = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zi2-mean-qtls.txt.gz', compression='gzip', sep=' ')
-# means = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zi2-mean.txt.gz', compression='gzip', sep=' ')
-# disps = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zi2-dispersion.txt.gz', compression='gzip', sep=' ')
+layout = bokeh.layouts.layout([[sc_mean_by_geno, bulk_mean_by_geno]])
 
-# genotypes = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/bulk-qtl-genotypes.txt.gz', compression='gzip', sep=' ')
-
-# source = bokeh.models.ColumnDataSource({'umi': umi.iloc[0]})
-# bokeh.plotting.curdoc().add_root(bokeh.layouts.column(plot_umi(source)))
-
-p = bokeh.plotting.figure()
-p.line(x=np.arange(5), y=np.arange(5))
-bokeh.plotting.curdoc().add_root(bokeh.layouts.column(p))
+doc = bokeh.io.curdoc()
+doc.title = 'scQTL browser'
+doc.add_root(layout)
