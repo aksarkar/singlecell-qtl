@@ -5,7 +5,7 @@ import sqlite3
 with sqlite3.connect('browser.db') as conn:
   conn.executescript("""
   create table if not exists gene_info (gene string primary key, chr string, start int, end int, name string, strand string, source string);
-  create table if not exists cell_to_ind (sample string primary key, ind string);
+  create table if not exists annotation (sample string primary key, ind string);
   create table if not exists log_mean (gene string, ind string, value real, primary key (gene, ind));
   create table if not exists log_disp (gene string, ind string, value real, primary key (gene, ind));
   create table if not exists genotype (gene string, ind string, value real, primary key (gene, ind));
@@ -53,13 +53,17 @@ with sqlite3.connect('browser.db') as conn:
    .to_sql(name='bulk', con=conn, index=False, if_exists='replace'))
 
 annotations = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/scqtl-annotation.txt')
+keep_genes = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/genes-pass-filter.txt', index_col=0, header=None)
 keep_samples = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/quality-single-cells.txt', index_col=0, header=None)
 annotations = annotations.loc[keep_samples.values.ravel()]
-annotations['sample'] = annotations.apply(lambda x: '.'.join([x['chip_id'], str(x['experiment']), x['well']]), axis=1)
+annotations['sample'] = annotations.apply(lambda x: '.'.join([x['chip_id'], '{:08d}'.format(x['experiment']), x['well']]), axis=1)
+annotations = annotations.set_index('sample')
 annotations['size'] = np.zeros(annotations.shape[0])
 with sqlite3.connect('browser.db') as conn:
   for chunk in pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/scqtl-counts.txt.gz', index_col=0, chunksize=100):
-    chunk = chunk.align(mean, axis=None, join='inner')[0]
+    chunk = (chunk
+             .filter(items=keep_genes[keep_genes.values.ravel()].index, axis='index')
+             .loc[:,keep_samples.values.ravel()])
     annotations['size'] += chunk.sum(axis=0)
-    chunk.reset_index().melt(id_vars='gene', var_name='ind').to_sql(name='umi', con=conn, index=False, if_exists='append')
-  annotations[['sample', 'chip_id', 'size']].to_sql(name='annotation', con=conn, index=False, if_exists='replace')
+    chunk.reset_index().melt(id_vars='gene', var_name='sample').to_sql(name='umi', con=conn, index=False, if_exists='append')
+  annotations[['chip_id', 'size']].to_sql(name='annotation', con=conn, if_exists='replace')
