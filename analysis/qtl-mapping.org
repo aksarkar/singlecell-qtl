@@ -36,11 +36,12 @@
     import numpy as np
     import scipy.stats as st
     import pandas as pd
+    import tabix
   #+END_SRC
 
   #+RESULTS: qtl-imports
   :RESULTS:
-  # Out[231]:
+  # Out[106]:
   :END:
 
   #+RESULTS:
@@ -1954,7 +1955,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[42]:
+  # Out[98]:
   :END:
 
   Read the bulk eQTLs (significant by permutation test).
@@ -1970,7 +1971,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[55]:
+  # Out[99]:
   :END:
 
   Test each bulk QTL-gene pair in the single cell data.
@@ -1994,7 +1995,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[194]:
+  # Out[100]:
   :END:
 
   #+BEGIN_SRC ipython :async t
@@ -2005,26 +2006,25 @@
       beta, rss, *_ = np.linalg.lstsq(x.values.reshape(-1, 1), y.values.ravel(), rcond=None)
       sigma2 = rss / y.shape[0]
       se = sigma2 / np.inner(x.values, x.values)
-      pval = _sf(np.square(beta[0] / se))
-      result.append({'gene': name, 'beta': beta[0], 'p_sc': pval})
+      pval = _sf(np.square(beta / se))
+      result.append({'gene': name, 'beta': beta[0], 'p_sc': pval.ravel()[0]})
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[235]:
   :END:
 
   #+BEGIN_SRC ipython
     merged = (bulk_qtls.merge(pd.DataFrame.from_dict(result), on='gene', suffixes=['_bulk', '_sc'])
               .set_index('gene')
               .sort_values('p_beta')
-              .reset_index(drop=True)[['id', 'p_beta', 'beta_bulk', 'p_sc', 'beta_sc']])
+              .reset_index()[['gene', 'id', 'p_beta', 'beta_bulk', 'p_sc', 'beta_sc']])
     merged.to_csv('/home/aksarkar/projects/singlecell-qtl/data/zi2-mean-qtls.txt.gz', compression='gzip', sep=' ')
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[241]:
+  # Out[120]:
   :END:
 
   #+BEGIN_SRC ipython
