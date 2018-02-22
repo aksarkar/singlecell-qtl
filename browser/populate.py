@@ -52,6 +52,10 @@ with sqlite3.connect('browser.db') as conn:
    .melt(id_vars='gene', var_name='ind')
    .to_sql(name='bulk', con=conn, index=False, if_exists='replace'))
 
+with sqlite3.connect('browser.db') as conn:
+  (pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zi2-mean-qtls.txt.gz', sep=' ', index_col='gene')
+   .to_sql('qtls', con=conn, if_exists='replace'))
+
 annotations = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/scqtl-annotation.txt')
 keep_genes = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/genes-pass-filter.txt', index_col=0, header=None)
 keep_samples = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/quality-single-cells.txt', index_col=0, header=None)
