@@ -40,26 +40,33 @@ ind_data = bokeh.models.ColumnDataSource(pd.DataFrame(columns=['genotype', 'mean
 gene_data = bokeh.models.ColumnDataSource(pd.DataFrame(columns=['gene', 'name', 'id', 'p_bulk', 'beta_bulk', 'p_sc', 'beta_sc']))
 gene_data.on_change('selected', update_gene)
 
-sc_mean_by_geno = bokeh.plotting.figure(width=600, height=400, tools=['tap'])
+umi_data = bokeh.models.ColumnDataSource(pd.DataFrame(columns=['left', 'right', 'count']))
+dist_data = bokeh.models.ColumnDataSource(pd.DataFrame(columns=['x', 'y']))
+
+# These need to be module scope because bokeh.server looks there
+qtls = bokeh.models.widgets.DataTable(
+    source=gene_data,
+    columns=[bokeh.models.widgets.TableColumn(field=x, title=x) for x in ['name', 'id', 'p_bulk', 'beta_bulk', 'p_sc', 'beta_sc']],
+    width=1200,
+    height=400)
+
+sc_mean_by_geno = bokeh.plotting.figure(width=400, height=400, tools=['tap'])
 sc_mean_by_geno.scatter(source=ind_data, x='genotype', y='mean', size=8)
 sc_mean_by_geno.xaxis.axis_label = 'Centered genotype'
 sc_mean_by_geno.yaxis.axis_label = 'Estimated single cell log mean expression'
 
-bulk_mean_by_geno = bokeh.plotting.figure(width=600, height=400, tools=['tap'])
+bulk_mean_by_geno = bokeh.plotting.figure(width=400, height=400, tools=['tap'])
 bulk_mean_by_geno.scatter(source=ind_data, x='genotype', y='bulk', size=8)
 bulk_mean_by_geno.xaxis.axis_label = 'Centered genotype'
 bulk_mean_by_geno.yaxis.axis_label = 'Bulk log CPM'
 
-qtls = bokeh.layouts.WidgetBox(
-  bokeh.models.widgets.DataTable(
-    source=gene_data,
-    columns=[bokeh.models.widgets.TableColumn(field=x, title=x) for x in ['name', 'id', 'p_bulk', 'beta_bulk', 'p_sc', 'beta_sc']],
-    width=1200,
-    height=400,
-  ),
-)
+umi = bokeh.plotting.figure(width=400, height=400, tools=[])
+umi.quad(source=umi_data, bottom=0, top='count', left='left', right='right')
+umi.line(source=dist_data, x='x', y='y')
+umi.xaxis.axis_label = 'Observed UMI'
+umi.yaxis.axis_label = 'Number of cells'
 
-layout = bokeh.layouts.layout([[qtls], [sc_mean_by_geno, bulk_mean_by_geno]], sizing_mode='fixed')
+layout = bokeh.layouts.layout([[qtls], [bulk_mean_by_geno, sc_mean_by_geno, umi]], sizing_mode='fixed')
 
 doc = bokeh.io.curdoc()
 doc.title = 'scQTL browser'
