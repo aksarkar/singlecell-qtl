@@ -28,7 +28,7 @@
   #+CALL: ipython3(memory="4G", venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 43417151
+  : Submitted batch job 43706157
 
   #+NAME: qtl-imports
   #+BEGIN_SRC ipython
@@ -41,7 +41,7 @@
 
   #+RESULTS: qtl-imports
   :RESULTS:
-  # Out[106]:
+  # Out[1]:
   :END:
 
   #+RESULTS:
@@ -1938,7 +1938,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[61]:
+  # Out[2]:
   :END:
 
   Read the bulk eQTLs (nominally significant).
@@ -1955,7 +1955,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[98]:
+  # Out[3]:
   :END:
 
   Read the bulk eQTLs (significant by permutation test).
@@ -1971,7 +1971,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[99]:
+  # Out[4]:
   :END:
 
   Test each bulk QTL-gene pair in the single cell data.
@@ -1979,8 +1979,12 @@
   #+BEGIN_SRC ipython
     def parse_vcf(record):
       geno = np.ma.masked_equal([sum(float(h) for h in g.split('/')) if '.' not in g else -1 for g in record[9:]], -1)
+      maf = .5 * geno.mean()
+      geno = geno.filled(geno.mean())
+      if maf > .5:
+        geno = 2 - geno
       geno -= geno.mean()
-      return pd.Series(geno.filled(0))
+      return pd.Series(geno)
 
     def extract_qtl_gene_pair(bulk_qtls, means):
       Y, common_qtls = means.align(bulk_qtls.set_index('gene'), join='inner', axis=0)
@@ -1995,10 +1999,10 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[100]:
+  # Out[13]:
   :END:
 
-  #+BEGIN_SRC ipython :async t
+  #+BEGIN_SRC ipython
     X, Y = extract_qtl_gene_pair(perm_bulk_qtls, mean)
     result = []
     _sf = st.chi2(1).sf
@@ -2012,6 +2016,7 @@
 
   #+RESULTS:
   :RESULTS:
+  # Out[14]:
   :END:
 
   #+BEGIN_SRC ipython
@@ -2024,7 +2029,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[120]:
+  # Out[15]:
   :END:
 
   #+BEGIN_SRC ipython
