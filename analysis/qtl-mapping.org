@@ -14,7 +14,11 @@
   \(i\), gene \(k\), \(X\) is the genotype matrix (\(n \times 1)\), and
   \(\beta_\mu, \beta_\phi\) are the effect sizes (scalar).
 
+  Here, we present the following analyses:
+
   1. [[*Test bulk eQTLs in the single cell data][We replicate eQTLs]] discovered in matched bulk RNA-Seq
+  2. [[*Call mean-QTLs in the single cell data][We call mean QTLs]] in the scRNA-Seq data and replicate in bulk
+  3. [[*Dispersion-QTL calling][We call robustness QTLs]] in the scRNA-Seq data
 
 * Setup                                                            :noexport:
 
@@ -1953,7 +1957,6 @@
   :END:
 
   
-
 
 * Dispersion-QTL calling
 
