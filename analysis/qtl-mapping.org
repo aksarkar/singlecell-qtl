@@ -32,7 +32,7 @@
   #+CALL: ipython3(memory="4G", venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 43732963
+  : Submitted batch job 43812328
 
   #+NAME: qtl-imports
   #+BEGIN_SRC ipython
@@ -98,7 +98,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[33]:
+  # Out[3]:
   :END:
 
   Read the bulk eQTLs (significant by permutation test).
@@ -114,20 +114,23 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[34]:
+  # Out[4]:
   :END:
 
-  Test each bulk QTL-gene pair in the single cell data.
+  Test each bulk QTL-gene pair in the single cell data. Mean-impute and
+  center genotypes.
 
   #+BEGIN_SRC ipython
     def parse_vcf(record):
-      geno = np.ma.masked_equal([sum(float(h) for h in g.split('/')) if '.' not in g else -1 for g in record[9:]], -1)
-      maf = .5 * geno.mean()
-      geno = geno.filled(geno.mean())
-      if maf > .5:
-        geno = 2 - geno
-      geno -= geno.mean()
+      geno = [sum(float(h) for h in g.split('/')) if '.' not in g else -1 for g in record[9:]]
       return pd.Series(geno)
+
+    def standardize(geno):
+      # Important: this has to be done after filtering to common individuals
+      index = geno.index
+      geno = np.ma.masked_equal(geno, -1).filled(geno.mean())
+      geno -= geno.mean()
+      return pd.Series(geno, index=index)
 
     def extract_qtl_gene_pair(bulk_qtls, means):
       Y, common_qtls = means.align(bulk_qtls.set_index('gene'), join='inner', axis=0)
@@ -136,13 +139,14 @@
       X = (common_qtls
            .apply(lambda x: parse_vcf(next(genotypes.query(x['chr'], int(x['pos']) - 1, int(x['pos'])))), axis=1)
            .rename(columns={i: ind for i, ind in enumerate(header.columns[9:])})
-           .align(Y, join='inner', axis=None)[0])
+           .align(Y, join='inner', axis=None)[0]
+           .apply(standardize, axis=1))
       return X, Y
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[37]:
+  # Out[98]:
   :END:
 
   #+BEGIN_SRC ipython
@@ -150,7 +154,10 @@
     result = []
     _sf = st.chi2(1).sf
     for (_, x), (name, y) in zip(X.iterrows(), Y.iterrows()):
-      beta, rss, *_ = np.linalg.lstsq(x.values.reshape(-1, 1), y.values.ravel(), rcond=None)
+      if np.isclose(x.std(), 0):
+        print('Skipping {}'.format(name))
+        continue
+      beta, rss, *_ = np.linalg.lstsq(x.values.reshape(-1, 1), y.values.ravel(), rcond=-1)
       sigma2 = rss / y.shape[0]
       se = sigma2 / np.inner(x.values, x.values)
       pval = _sf(np.square(beta / se))
@@ -159,7 +166,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[38]:
+  # Out[99]:
   :END:
 
   #+BEGIN_SRC ipython
@@ -172,7 +179,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[40]:
+  # Out[101]:
   :END:
 
   #+BEGIN_SRC ipython
@@ -181,7 +188,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[17]:
+  # Out[102]:
   :END:
 
   Count how many bulk QTLs replicate in the single cell data at FDR 5%.
@@ -194,7 +201,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[48]:
+  # Out[87]:
   :END:
 
   #+BEGIN_SRC ipython
@@ -206,8 +213,8 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[63]:
-  : (621, 0.6336734693877552)
+  # Out[103]:
+  : (630, 0.6441717791411042)
   :END:
 
   Count how many bulk QTLs replicate in the single cell data at FDR 5% and have
@@ -220,8 +227,8 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[65]:
-  : 338
+  # Out[104]:
+  : 386
   :END:
 
 * Call mean-QTLs in the single cell data
@@ -252,7 +259,7 @@
 
   #+RESULTS: get-gene-info
   :RESULTS:
-  # Out[33]:
+  # Out[14]:
   :END:
 
   #+NAME: write-pheno-def
@@ -1955,8 +1962,6 @@
   # Out[132]:
   [[file:figure/qtl-mapping.org/zi2-mean-qtl-qq.png]]
   :END:
-
-  
 
 * Dispersion-QTL calling
 
