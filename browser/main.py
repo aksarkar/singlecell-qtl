@@ -8,6 +8,8 @@ import bokeh.plotting
 import os.path
 import numpy as np
 import pandas as pd
+import scipy.stats as st
+import scipy.special as sp
 import sqlite3
 
 def update_gene(attr, old, new):
@@ -32,7 +34,7 @@ def update_umi(attr, old, new):
       gene = next(conn.execute('select gene from qtls where qtls.gene == ?;', (gene_data.data['gene'][selected[0]],)))[0]
       ind = ind_data.data['ind'][selected[0]]
       umi = pd.read_sql(
-        """select umi.value from annotation, umi 
+        """select umi.value, annotation.size from annotation, umi 
         where umi.gene == ? and annotation.chip_id == ? and 
         umi.sample == annotation.sample""",
         con=conn,
@@ -41,8 +43,25 @@ def update_umi(attr, old, new):
       edges = np.arange(20)
       counts, _ = np.histogram(umi['value'].values, bins=edges)
       umi_data.data = bokeh.models.ColumnDataSource.from_df(pd.DataFrame({'left': edges[:-1], 'right': edges[1:], 'count': counts}))
+
+      log_mean = float(next(conn.execute('select value from log_mean where gene == ? and ind == ?', (gene, ind)))[0])
+      log_disp = float(next(conn.execute('select value from log_disp where gene == ? and ind == ?', (gene, ind)))[0])
+      logodds = float(next(conn.execute('select value from logodds where gene == ? and ind == ?', (gene, ind)))[0])
+      n = np.exp(-log_disp)
+      p = 1 / (1 + umi['size'] * np.exp(log_mean + log_disp).T)
+      assert n > 0
+      assert (p >= 0).all()
+      assert (p <= 1).all()
+      G = st.nbinom(n=n, p=p).pmf
+      grid = np.arange(19)
+      exp_count = umi.shape[0] * np.array([G(x).mean() for x in grid])
+      exp_count[0] *= sp.expit(logodds)
+      exp_count[0] += (umi['value'] == 0).values.sum() * sp.expit(-logodds)
+      print(ind, gene, log_mean, log_disp, logodds)
+      dist_data.data = bokeh.models.ColumnDataSource.from_df(pd.DataFrame({'x': .5 + grid, 'y': exp_count}))
     else:
       umi_data.data = bokeh.models.ColumnDataSource.from_df(pd.DataFrame(columns=['left', 'right', 'count']))
+      dist_data.data = bokeh.models.ColumnDataSource.from_df(pd.DataFrame(columns=['x', 'y']))
 
 def init():
   with sqlite3.connect(os.path.join(os.path.dirname(__file__), 'browser.db')) as conn:
@@ -71,18 +90,18 @@ qtls = bokeh.models.widgets.DataTable(
     height=400)
 
 sc_mean_by_geno = bokeh.plotting.figure(width=400, height=400, tools=['tap'])
-sc_mean_by_geno.scatter(source=ind_data, x='genotype', y='mean', size=8)
+sc_mean_by_geno.scatter(source=ind_data, x='genotype', y='mean', color='black', size=8)
 sc_mean_by_geno.xaxis.axis_label = 'Centered genotype'
 sc_mean_by_geno.yaxis.axis_label = 'Estimated single cell log mean expression'
 
 bulk_mean_by_geno = bokeh.plotting.figure(width=400, height=400, tools=['tap'])
-bulk_mean_by_geno.scatter(source=ind_data, x='genotype', y='bulk', size=8)
+bulk_mean_by_geno.scatter(source=ind_data, x='genotype', y='bulk', color='black', size=8)
 bulk_mean_by_geno.xaxis.axis_label = 'Centered genotype'
 bulk_mean_by_geno.yaxis.axis_label = 'Bulk log CPM'
 
 umi = bokeh.plotting.figure(width=400, height=400, tools=[])
-umi.quad(source=umi_data, bottom=0, top='count', left='left', right='right')
-umi.line(source=dist_data, x='x', y='y')
+umi.quad(source=umi_data, bottom=0, top='count', left='left', right='right', color='black')
+umi.line(source=dist_data, x='x', y='y', color='red')
 umi.xaxis.axis_label = 'Observed UMI'
 umi.yaxis.axis_label = 'Number of cells'
 
