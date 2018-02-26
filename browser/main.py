@@ -28,27 +28,21 @@ def update_gene(attr, old, new):
 def update_umi(attr, old, new):
   selected = ind_data.selected['1d']['indices']
   with sqlite3.connect(os.path.join(os.path.dirname(__file__), 'browser.db')) as conn:
-    gene = next(conn.execute('select gene from qtls where qtls.gene == ?;', (gene_data.data['gene'][selected[0]],)))[0]
-    if not selected:
+    if selected:
+      gene = next(conn.execute('select gene from qtls where qtls.gene == ?;', (gene_data.data['gene'][selected[0]],)))[0]
+      ind = ind_data.data['ind'][selected[0]]
       umi = pd.read_sql(
-        """select umi.value, log_mean.value, log_disp.value, annotation.size 
-        from annotation, log_mean, log_disp, umi 
-        where annotation.chip_id == log_mean.ind and log_mean.ind == log_disp.ind 
-        and umi.gene == ? and umi.sample == annotation.sample""",
+        """select umi.value from annotation, umi 
+        where umi.gene == ? and annotation.chip_id == ? and 
+        umi.sample == annotation.sample""",
         con=conn,
-        params=(gene,))
+        params=(gene, ind,))
+      keep = umi['value'] < 19
+      edges = np.arange(20)
+      counts, _ = np.histogram(umi['value'].values, bins=edges)
+      umi_data.data = bokeh.models.ColumnDataSource.from_df(pd.DataFrame({'left': edges[:-1], 'right': edges[1:], 'count': counts}))
     else:
-      print(gene, ind_data.data['ind'][selected[0]])
-      umi = pd.read_sql(
-        """select umi.value, log_mean.value, log_disp.value, annotation.size 
-        from annotation, log_mean, log_disp, umi 
-        where annotation.chip_id == ? and annotation.chip_id == log_mean.ind 
-        and log_mean.ind == log_disp.ind and umi.gene == ?
-        and umi.sample == annotation.sample""",
-        con=conn,
-        params=(ind_data.data['ind'][selected[0]], gene,))
-    counts, edges = np.histogram(umi['value'].values)
-    umi_data.data = bokeh.models.ColumnDataSource.from_df(pd.DataFrame({'left': edges[:-1], 'right': edges[1:], 'count': counts}))
+      umi_data.data = bokeh.models.ColumnDataSource.from_df(pd.DataFrame(columns=['left', 'right', 'count']))
 
 def init():
   with sqlite3.connect(os.path.join(os.path.dirname(__file__), 'browser.db')) as conn:
@@ -61,6 +55,7 @@ def init():
 
 # These need to be separate because they have different dimension
 ind_data = bokeh.models.ColumnDataSource(pd.DataFrame(columns=['ind', 'genotype', 'mean', 'bulk']))
+ind_data.on_change('selected', update_umi)
 
 gene_data = bokeh.models.ColumnDataSource(pd.DataFrame(columns=['gene', 'name', 'id', 'p_bulk', 'beta_bulk', 'p_sc', 'beta_sc']))
 gene_data.on_change('selected', update_gene)
