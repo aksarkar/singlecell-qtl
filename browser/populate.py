@@ -59,8 +59,8 @@ with sqlite3.connect(outfile) as conn:
   for chunk in pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/scqtl-counts.txt.gz', index_col=0, chunksize=100):
     chunk = (chunk
              .filter(items=keep_genes[keep_genes.values.ravel()].index, axis='index')
-             .filter(items=mean.index, axis='index')
              .loc[:,keep_samples.values.ravel()])
-    annotations['size'] += chunk.sum(axis=0)
-    chunk.reset_index().melt(id_vars='gene', var_name='sample').to_sql(name='umi', con=conn, index=False, if_exists='append')
+    if not chunk.empty:
+      annotations['size'] += chunk.sum(axis=0)
+      chunk.reset_index().melt(id_vars='gene', var_name='sample').to_sql(name='umi', con=conn, index=False, if_exists='append')
   annotations[['chip_id', 'size']].to_sql(name='annotation', con=conn, if_exists='replace')
