@@ -28,7 +28,7 @@ def update_gene(attr, old, new):
 def init():
   with sqlite3.connect(os.path.join(os.path.dirname(__file__), 'browser.db')) as conn:
     gene_data.data = bokeh.models.ColumnDataSource.from_df(pd.read_sql(
-      sql="""select gene_info.gene as gene, gene_info.name, qtls.id, qtls.p_beta as p_bulk, qtls.beta_bulk, qtls.p_sc, qtls.beta_sc
+      sql="""select gene_info.gene as gene, gene_info.name, qtls.id, qtls.p_bulk, qtls.beta_bulk, qtls.p_sc, qtls.beta_sc
       from gene_info, qtls 
       where gene_info.gene == qtls.gene
       order by p_bulk;""",
