@@ -69,7 +69,7 @@
   #+CALL: ipython3(memory="16G",venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 43487308
+  : Submitted batch job 43875835
 
   #+NAME: zinb-imports
   #+BEGIN_SRC ipython
@@ -92,7 +92,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[5]:
+  # Out[2]:
   :END:
 
   #+NAME: tf-imports
@@ -133,7 +133,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[4]:
+  # Out[3]:
   :END:
 
   Compute size factors.
@@ -144,7 +144,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[5]:
+  # Out[4]:
   :END:
 
   Onehot-encode the samples.
@@ -160,8 +160,8 @@
 
   #+RESULTS: onehot-qc
   :RESULTS:
-  # Out[6]:
-  : (4985, 54)
+  # Out[5]:
+  : (4995, 54)
   :END:
 
   Check that one-hot encoding is OK:
@@ -179,145 +179,6 @@
   :RESULTS:
   # Out[5]:
   :END:
-
-* Dask implementation                                              :noexport:
-
-  Optimize each pair of mean/dispersion parameters by sequentially considering
-  each subset of the data (set of cells per gene per individual). Use
-  ~multiprocessing~ to parallelize this over chunks of genes.
-
-  To actually fit the models, don't read the entire data in. Instead use ~dask~
-  to process chunks at a time.
-
-  #+NAME: chunk-data
-  #+BEGIN_SRC ipython :eval never
-    import dask.dataframe
-    keep_samples = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/quality-single-cells.txt', index_col=0, header=None)
-    keep_genes = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/genes-pass-filter.txt', index_col=0, header=None)
-    onehot = pd.read_table('/scratch/midway2/aksarkar/singlecell/onehot.txt.gz')
-    umi = dd.read_csv('/home/aksarkar/projects/singlecell-qtl/data/scqtl-counts.txt.gz')
-  #+END_SRC
-
-  #+BEGIN_SRC ipython :eval never :tangle nb.py :noweb yes :exports none
-    <<zinb-imports>>
-    import multiprocessing as mp
-    import scipy.optimize
-    import scipy.special
-
-    <<read-data-qc>>
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[102]:
-  :END:
-
-  Optimize the negative log-likelihood using BFGS.
-
-  #+BEGIN_SRC ipython :tangle nb.py
-    def zinb(theta, x, size):
-      theta, dropout = theta[:2], scipy.special.expit(theta[2])
-      case_zero = -np.log(dropout + (1 - dropout) * np.exp(nll(theta, x, size)))
-      case_non_zero = np.log(1 - dropout) + nll(theta, x, size)
-      return np.where(x < 1e-8, case_zero, case_non_zero).mean()
-
-    def nll(theta, x, size):
-      mean, inv_disp = np.exp(theta)
-      mean *= size
-      assert mean.shape == x.shape
-      return -(x * np.log(mean / inv_disp + 1e-8) -
-               x * np.log(1 + mean / inv_disp + 1e-8) -
-               inv_disp * np.log(1 + mean / inv_disp + 1e-8) +
-               scipy.special.gammaln(x + inv_disp) -
-               scipy.special.gammaln(inv_disp) -
-               scipy.special.gammaln(x + 1)).mean()
-
-    def fit_scipy(x, size):
-      res = scipy.optimize.minimize(fun=nll, x0=[0, 0], args=(x, size), tol=1e-4)
-      if res.success:
-        return tuple(res.x)
-      else:
-        return (float('nan'), float('nan'))
-
-    def process_chunk(x, size):
-      res = pd.DataFrame([(gene, k) + fit_scipy(row.loc[g].values, size.loc[g].values)
-                           for gene, row in x.iterrows()
-                           for k, g in row.groupby(annotations['chip_id'].values).groups.items()])
-      res.columns = ['gene', 'individual', 'mean', 'dispersion']
-      res.set_index('gene', inplace=True)
-      return res
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[24]:
-  :END:
-
-  Output record-like data for each parameter to make reassembling the result
-  easier.
-
-  #+BEGIN_SRC ipython
-    process_chunk(umi.iloc[:5], size).head()
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[90]:
-  #+BEGIN_EXAMPLE
-    individual      mean  dispersion
-    gene
-    ENSG00000000003    NA18519 -8.223728    2.564775
-    ENSG00000000003    NA18862 -8.406216    2.263670
-    ENSG00000000003    NA19093 -8.339645    2.393590
-    ENSG00000000003    NA19128 -8.479335    2.293822
-    ENSG00000000003    NA18852 -8.609513    2.454818
-  #+END_EXAMPLE
-  :END:
-
-  #+BEGIN_SRC ipython
-    Out[90].pivot(columns='individual', values='mean') 
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[99]:
-  #+BEGIN_EXAMPLE
-    individual        NA18519   NA18852   NA18862   NA19093   NA19128
-    gene
-    ENSG00000000003 -8.223728 -8.609513 -8.406216 -8.339645 -8.479335
-  #+END_EXAMPLE
-  :END:
-
-  #+BEGIN_SRC ipython :eval never :tangle nb.py
-    f = functools.partial(process_chunk, size=umi.agg(np.sum))
-    with mp.Pool(maxtasksperchild=10) as pool:
-      result = pd.concat(pool.map(f, np.array_split(umi, 1000)))
-
-    log_mean = result.pivot(columns='individual', values='mean')
-    log_disp = result.pivot(columns='individual', values='dispersion') 
-
-    log_mean.to_csv('/scratch/midway2/aksarkar/singlecell/mean.txt.gz', sep=' ', compression='gzip')
-    log_disp.to_csv('/scratch/midway2/aksarkar/singlecell/disp.txt.gz', sep=' ', compression='gzip')
-  #+END_SRC
-
-  # Tangle the code from this file and submit requesting multiple cores.
-
-  #+BEGIN_SRC emacs-lisp :exports none
-    (org-babel-tangle)
-  #+END_SRC
-
-  #+RESULTS:
-  | zinb.py | tensorflow-nb.py | nb.py |
-
-  #+BEGIN_SRC sh :exports none
-    sbatch --partition="broadwl" -N1 -c16 --mem=32G --out=nb.out
-    #!/bin/bash
-    source activate scqtl
-    python nb.py
-  #+END_SRC
-
-  #+RESULTS:
-  : Submitted batch job 42917334
 
 * Tensorflow implementation
 
