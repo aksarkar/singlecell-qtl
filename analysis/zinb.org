@@ -51,7 +51,7 @@
 
   Then, the log-likelihood of the data is:
 
-  \[ \ln p(r_{ijk} \mid \cdot) = -\ln(\pi_\cdot + (1 -  \pi_{\cdot}) p(r_{ijk}
+  \[ \ln p(r_{ijk} \mid \cdot) = \ln(\pi_\cdot + (1 -  \pi_{\cdot}) p(r_{ijk}
     \mid R_{ij}, \mu_{ik}, \phi_{ik}))\ \text{if}\ r_{ijk} = 0 \]
   \[ \ln p(r_{ijk} \mid \cdot) = \ln(1 - \pi_{\cdot}) + \ln p(r_{ijk} \mid
     R_{ij}, \mu_{ik}, \phi_{ik})\ \text{otherwise} \]
@@ -133,7 +133,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[167]:
+  # Out[61]:
   :END:
 
   Compute size factors.
@@ -179,6 +179,36 @@
   :RESULTS:
   # Out[5]:
   :END:
+
+* numpy/scipy implementation
+
+  Use this to check the parameter estimation for a particular gene/individual.
+
+  #+BEGIN_SRC ipython
+    import scipy.special as sp
+
+    def zinb(theta, x, size):
+      theta, dropout = theta[:2], sp.expit(theta[2])
+      case_zero = np.log(dropout + (1 - dropout) * np.exp(-nll(theta, x, size)))
+      case_non_zero = np.log(1 - dropout) - nll(theta, x, size)
+      return -np.where(x < 1e-8, case_zero, case_non_zero).mean()
+
+    def nll(theta, x, size):
+      mean, inv_disp = np.exp(theta)
+      mean *= size
+      assert mean.shape == x.shape
+      return -(x * np.log(mean / inv_disp + 1e-8) -
+               x * np.log(1 + mean / inv_disp + 1e-8) -
+               inv_disp * np.log(1 + mean / inv_disp + 1e-8) +
+               sp.gammaln(x + inv_disp) -
+               sp.gammaln(inv_disp) -
+               sp.gammaln(x + 1)).mean()
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[62]:
+   :END:
 
 * Tensorflow implementation
 
@@ -227,7 +257,7 @@
       logodds - dropout log odds
 
       """
-      case_zero = -log(sigmoid(-logodds) + sigmoid(logodds) * tf.exp(nb_llik(x, mean, inv_disp)))
+      case_zero = log(sigmoid(-logodds) + sigmoid(logodds) * tf.exp(nb_llik(x, mean, inv_disp)))
       case_non_zero = -tf.nn.softplus(logodds) + nb_llik(x, mean, inv_disp)
       return tf.where(tf.less(x, 1e-8), case_zero, case_non_zero)
 
@@ -239,17 +269,25 @@
       umi - count matrix (n x p; float32)
       onehot - mapping of individuals to cells (m x n; float32)
       size_factor - size factor vector (n x 1; float32)
+      gene_dropout - fit one dropout parameter per gene
+      ind_dropout - fit one dropout parameter per individual
+      init_log_mean - initial value for estimated log mean (m x p; float32)
+      init_log_disp - initial value for estimated log dispersion (m x p; float32)
+
+      If ind_dropout is True, gene_dropout must be True, otherwise raises
+      ArgumentError.
 
       Returns:
 
       log_mean - log mean parameter (m x p)
       log_disp - log dispersion parameter (m x p)
-      dropout - if zero_inflation, dropout log odds (n x p)
+      dropout - dropout log odds (1 x p if gene_dropout, n x p if ind_dropout)
 
       """
       n, p = umi.shape
       _, m = onehot.shape
 
+      params = locals()
       graph = tf.Graph()
       with graph.as_default(), graph.device('/gpu:*'):
         size_factor = tf.Variable(size_factor, trainable=False)
@@ -531,24 +569,24 @@
   #+END_SRC
 
   #+BEGIN_SRC sh :eval never-export :exports none
-    sbatch --partition=gpu2 --gres=gpu:1 --mem=16G --time=120 --job-name=zinb --output=zinb.out --error=zinb.err
+    sbatch --partition=gpu2 --gres=gpu:1 --mem=16G --time=70 --job-name=zinb --output=zinb.out --error=zinb.err
     #!/bin/bash
     source activate scqtl
     python zinb.py
   #+END_SRC
 
   #+RESULTS:
-  : Submitted batch job 43244397
+  : Submitted batch job 43907781
 
   #+BEGIN_SRC sh :exports none
-    sacct -j 43244397 -o Elapsed,MaxRSS,MaxVMSize
+    sacct -j 43907781 -o Elapsed,MaxRSS,MaxVMSize
   #+END_SRC
 
   #+RESULTS:
   |    Elapsed | MaxRSS     | MaxVMSize  |
   | ---------- | ---------- | ---------- |
-  |   01:05:22 |            |            |
-  |   01:05:22 | 3957908K   | 162203788K |
+  |   01:00:50 |            |            |
+  |   01:00:50 | 4095240K   | 162503328K |
 
   Plot the diagnostic for the model.
 

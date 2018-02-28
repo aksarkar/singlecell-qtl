@@ -32,7 +32,7 @@
   #+CALL: ipython3(memory="4G", venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 43896725
+  : Submitted batch job 43910732
 
   #+NAME: qtl-imports
   #+BEGIN_SRC ipython
@@ -65,27 +65,7 @@
   #+RESULTS:
   : Submitted batch job 42223832
 
-* Test bulk eQTLs against single cell NB means
-
-  Estimate a lower bound on the replication rate by:
-
-  1. For each individual, for each gene, estimate a mean and dispersion in the
-     single cell data ignoring zero inflation (i.e., just fit a negative
-     binomial model)
-  2. For each bulk RNA-Seq eQTL-gene pair, test the SNP against the estimated
-     means
-
-  Read the estimated parameters (phenotypes) then center them.
-
-  #+BEGIN_SRC ipython
-    mean = (pd.read_table('/scratch/midway2/aksarkar/singlecell/mean2.txt.gz', sep=' ', index_col=0)
-            .transform(lambda x: x - x.mean(), axis=1))
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[2]:
-  :END:
+* Replicate bulk eQTLs in the single cell data
 
   Read the bulk eQTLs (nominally significant).
 
@@ -101,7 +81,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[3]:
+  # Out[4]:
   :END:
 
   Read the bulk eQTLs (significant by permutation test).
@@ -117,7 +97,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[4]:
+  # Out[5]:
   :END:
 
   Test each bulk QTL-gene pair in the single cell data. Mean-impute and
@@ -151,9 +131,47 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[53]:
+  # Out[6]:
   :END:
 
+  Define replication as significant at FDR 5% in both bulk and single cell.
+
+  #+BEGIN_SRC ipython
+    def bh(df, column, fdr=0.05):
+      num_tests = df.shape[0]
+      return np.logical_and.accumulate(df.sort_values(column)[column] < fdr * np.arange(1, num_tests + 1) / num_tests)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[7]:
+  :END:
+
+** NB model
+
+  Estimate a lower bound on the replication rate using the following procedure:
+
+  1. For each individual, for each gene, [[file:zinb.org::*Fit%20NB][estimate a mean and dispersion in the
+     single cell data ignoring zero inflation]] (i.e., just fit a negative
+     binomial model)
+  2. For each bulk RNA-Seq eQTL-gene pair, test the SNP against the estimated
+     means
+
+  Read the estimated parameters (phenotypes) then center them.
+
+  #+BEGIN_SRC ipython
+    mean = (pd.read_table('/scratch/midway2/aksarkar/singlecell/mean2.txt.gz', sep=' ', index_col=0)
+            .transform(lambda x: x - x.mean(), axis=1))
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[2]:
+  :END:
+
+  Perform the eQTL tests.
+
+  #+NAME: replication-tests
   #+BEGIN_SRC ipython
     X, Y = extract_qtl_gene_pair(perm_bulk_qtls, mean)
     result = []
@@ -167,6 +185,10 @@
       se = sigma2 / np.inner(x.values, x.values)
       pval = _sf(np.square(beta / se))
       result.append({'gene': name, 'beta': beta[0], 'p_sc': pval.ravel()[0]})
+    merged = (bulk_qtls.merge(pd.DataFrame.from_dict(result), on='gene', suffixes=['_bulk', '_sc'])
+              .set_index('gene')
+              .sort_values('p_bulk')
+              .reset_index()[['gene', 'id', 'p_bulk', 'beta_bulk', 'p_sc', 'beta_sc']])
   #+END_SRC
 
   #+RESULTS:
@@ -174,20 +196,10 @@
   # Out[54]:
   :END:
 
+  Write out tables for the interactive browser.
+
   #+BEGIN_SRC ipython
-    merged = (bulk_qtls.merge(pd.DataFrame.from_dict(result), on='gene', suffixes=['_bulk', '_sc'])
-              .set_index('gene')
-              .sort_values('p_bulk')
-              .reset_index()[['gene', 'id', 'p_bulk', 'beta_bulk', 'p_sc', 'beta_sc']])
     merged.to_csv('/home/aksarkar/projects/singlecell-qtl/data/nb-mean-qtls.txt.gz', compression='gzip', sep=' ')
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[55]:
-  :END:
-
-  #+BEGIN_SRC ipython
     X.to_csv('/home/aksarkar/projects/singlecell-qtl/data/bulk-qtl-genotypes.txt.gz', compression='gzip', sep=' ') 
   #+END_SRC
 
@@ -196,19 +208,9 @@
   # Out[56]:
   :END:
 
-  Count how many bulk QTLs replicate in the single cell data at FDR 5%.
+  Estimate the replication rate.
 
-  #+BEGIN_SRC ipython
-    def bh(df, column, fdr=0.05):
-      num_tests = df.shape[0]
-      return np.logical_and.accumulate(df.sort_values(column)[column] < fdr * np.arange(1, num_tests + 1) / num_tests)
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[9]:
-  :END:
-
+  #+NAME: replication-rate
   #+BEGIN_SRC ipython
     bulk_fdr_pass = bh(merged, 'p_bulk')
     sc_fdr_pass = bh(merged, 'p_sc')
@@ -222,9 +224,9 @@
   : (902, 0.9636752136752137)
   :END:
 
-  Count how many bulk QTLs replicate in the single cell data at FDR 5% and have
-  the same sign.
+  Estimate the concordance
 
+  #+NAME: effect-concordance
   #+BEGIN_SRC ipython
     sign_pass = (replicated['beta_bulk'] * replicated['beta_sc']).values > 0
     replicated[sign_pass].shape[0], sign_pass.sum() / replicated.shape[0]
@@ -236,166 +238,106 @@
   : (785, 0.8702882483370288)
   :END:
 
-* Test bulk eQTLs in the single cell data
+** ZINB model
 
-  Read the estimated parameters (phenotypes) then center them.
+   Estimate replication on [[file:zinb.org::*Fit%20ZINB][means estimated assuming a gene-specific dropout
+   parameters]].  Accounting for zero-inflation should push estimated means away
+   from zero, and should improve concordance for lowly expressed genes.
 
-  #+BEGIN_SRC ipython
-    mean = (pd.read_table('/scratch/midway2/aksarkar/singlecell/zi2-mean.txt.gz', sep=' ', index_col=0)
-            .transform(lambda x: x - x.mean(), axis=1))
-  #+END_SRC
+   Read the estimated parameters (phenotypes) then center them.
 
-  #+RESULTS:
-  :RESULTS:
-  # Out[2]:
-  :END:
+   #+BEGIN_SRC ipython
+     mean = (pd.read_table('/scratch/midway2/aksarkar/singlecell/zi-mean.txt.gz', sep=' ', index_col=0)
+             .transform(lambda x: x - x.mean(), axis=1))
+   #+END_SRC
 
-  Read the bulk eQTLs (nominally significant).
+   #+RESULTS:
+   :RESULTS:
+   # Out[8]:
+   :END:
 
-  #+BEGIN_SRC ipython
-    def parse_bulk_qtl_record(row):
-      gene, _ = row[0].split('.')
-      id_, *_ = row[5].split('.')
-      return pd.Series({'gene': gene, 'id': id_, 'beta': row.iloc[-3], 'p_bulk': row.iloc[-1]})
-    bulk_qtls = (pd.read_table('/project2/gilad/singlecell-qtl/bulk/permutations.all.RNAseq_run.fixed.txt.gz', sep=' ', header=None)
-                 .fillna('')
-                 .apply(parse_bulk_qtl_record, axis=1))
-  #+END_SRC
+   #+CALL: replication-tests()
 
-  #+RESULTS:
-  :RESULTS:
-  # Out[3]:
-  :END:
+   #+RESULTS:
+   :RESULTS:
+   # Out[9]:
+   :END:
 
-  Read the bulk eQTLs (significant by permutation test).
+   Write out tables for the interactive browser.
 
-  #+BEGIN_SRC ipython
-    def parse_perm_bulk_qtl_record(row):
-      gene, *_ = row[0].split('.')
-      id_, chr_, pos = row[1].split('.')
-      return pd.Series({'gene': gene, 'id': id_, 'chr': chr_, 'pos': pos, 'p_bulk': row.iloc[-1]})
-    perm_bulk_qtls = (pd.read_table('/project2/gilad/singlecell-qtl/bulk/permutations.all.RNAseq_run.fixed.txt.gz.bh.txt', sep=' ', header=0)
-                      .apply(parse_perm_bulk_qtl_record, axis=1))
-  #+END_SRC
+   #+BEGIN_SRC ipython
+     merged.to_csv('/home/aksarkar/projects/singlecell-qtl/data/zinb-mean-qtls.txt.gz', compression='gzip', sep=' ')
+   #+END_SRC
 
-  #+RESULTS:
-  :RESULTS:
-  # Out[4]:
-  :END:
+   #+RESULTS:
+   :RESULTS:
+   # Out[10]:
+   :END:
 
-  Test each bulk QTL-gene pair in the single cell data. Mean-impute and
-  center genotypes.
+   Estimate the replication rate.
 
-  #+BEGIN_SRC ipython
-    def parse_vcf(record):
-      geno = [sum(float(h) for h in g.split('/')) if '.' not in g else -1 for g in record[9:]]
-      return pd.Series(geno)
+   #+CALL: replication-rate()
 
-    def standardize(geno):
-      # Important: this has to be done after filtering to common individuals
-      index = geno.index
-      geno = np.ma.masked_equal(geno, -1).filled(geno.mean())
-      geno -= geno.mean()
-      return pd.Series(geno, index=index)
+   #+RESULTS:
+   :RESULTS:
+   # Out[11]:
+   : (894, 0.9551282051282052)
+   :END:
 
-    def extract_qtl_gene_pair(bulk_qtls, means):
-      Y, common_qtls = means.align(bulk_qtls.set_index('gene'), join='inner', axis=0)
-      header = pd.read_table('/project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz', skiprows=1, nrows=1, header=0)[9:]
-      genotypes = tabix.open('/project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz')
-      X = (common_qtls
-           .apply(lambda x: parse_vcf(next(genotypes.query(x['chr'], int(x['pos']) - 1, int(x['pos'])))), axis=1)
-           .rename(columns={i: ind for i, ind in enumerate(header.columns[9:])})
-           .align(Y, join='inner', axis=None)[0]
-           .apply(standardize, axis=1))
-      return X, Y
-  #+END_SRC
+   Estimate the concordance.
 
-  #+RESULTS:
-  :RESULTS:
-  # Out[98]:
-  :END:
+   #+CALL: effect-concordance()
 
-  #+BEGIN_SRC ipython
-    X, Y = extract_qtl_gene_pair(perm_bulk_qtls, mean)
-    result = []
-    _sf = st.chi2(1).sf
-    for (_, x), (name, y) in zip(X.iterrows(), Y.iterrows()):
-      if np.isclose(x.std(), 0):
-        print('Skipping {}'.format(name))
-        continue
-      beta, rss, *_ = np.linalg.lstsq(x.values.reshape(-1, 1), y.values.ravel(), rcond=-1)
-      sigma2 = rss / y.shape[0]
-      se = sigma2 / np.inner(x.values, x.values)
-      pval = _sf(np.square(beta / se))
-      result.append({'gene': name, 'beta': beta[0], 'p_sc': pval.ravel()[0]})
-  #+END_SRC
+   #+RESULTS:
+   :RESULTS:
+   # Out[12]:
+   : (752, 0.8411633109619687)
+   :END:
 
-  #+RESULTS:
-  :RESULTS:
-  # Out[99]:
-  :END:
+** ZINB2 model
 
-  #+BEGIN_SRC ipython
-    merged = (bulk_qtls.merge(pd.DataFrame.from_dict(result), on='gene', suffixes=['_bulk', '_sc'])
-              .set_index('gene')
-              .sort_values('p_bulk')
-              .reset_index()[['gene', 'id', 'p_bulk', 'beta_bulk', 'p_sc', 'beta_sc']])
-    merged.to_csv('/home/aksarkar/projects/singlecell-qtl/data/zi2-mean-qtls.txt.gz', compression='gzip', sep=' ')
-  #+END_SRC
+   For each individual, for each gene, estimate mean, dispersion, and dropout
+   parameter.
 
-  #+RESULTS:
-  :RESULTS:
-  # Out[101]:
-  :END:
+   Read the estimated parameters (phenotypes) then center them.
 
-  #+BEGIN_SRC ipython
-    X.to_csv('/home/aksarkar/projects/singlecell-qtl/data/bulk-qtl-genotypes.txt.gz', compression='gzip', sep=' ') 
-  #+END_SRC
+   #+BEGIN_SRC ipython
+     mean = (pd.read_table('/scratch/midway2/aksarkar/singlecell/zi2-mean.txt.gz', sep=' ', index_col=0)
+             .transform(lambda x: x - x.mean(), axis=1))
+   #+END_SRC
 
-  #+RESULTS:
-  :RESULTS:
-  # Out[102]:
-  :END:
+   #+RESULTS:
+   :RESULTS:
+   # Out[2]:
+   :END:
 
-  Count how many bulk QTLs replicate in the single cell data at FDR 5%.
+   #+CALL: replication-test()
 
-  #+BEGIN_SRC ipython
-    def bh(df, column, fdr=0.05):
-      num_tests = df.shape[0]
-      return np.logical_and.accumulate(df.sort_values(column)[column] < fdr * np.arange(1, num_tests + 1) / num_tests)
-  #+END_SRC
+   Write out tables for the interactive browser.
 
-  #+RESULTS:
-  :RESULTS:
-  # Out[87]:
-  :END:
+   #+BEGIN_SRC ipython
+     merged.to_csv('/home/aksarkar/projects/singlecell-qtl/data/zinb-mean-qtls.txt.gz', compression='gzip', sep=' ')
+   #+END_SRC
 
-  #+BEGIN_SRC ipython
-    bulk_fdr_pass = bh(merged, 'p_bulk')
-    sc_fdr_pass = bh(merged, 'p_sc')
-    replicated = merged[np.logical_and(*bulk_fdr_pass.align(sc_fdr_pass))]
-    replicated.shape[0], replicated.shape[0] / merged.shape[0]
-  #+END_SRC
+   Estimate the replication rate.
 
-  #+RESULTS:
-  :RESULTS:
-  # Out[103]:
-  : (630, 0.6441717791411042)
-  :END:
+   #+CALL: replication-rate()
 
-  Count how many bulk QTLs replicate in the single cell data at FDR 5% and have
-  the same sign.
+   Estimate the concordance.
 
-  #+BEGIN_SRC ipython
-    sign_pass = (replicated['beta_bulk'] * replicated['beta_sc']).values > 0
-    replicated[sign_pass].shape[0]
-  #+END_SRC
+   #+CALL: effect-concordance()
 
-  #+RESULTS:
-  :RESULTS:
-  # Out[104]:
-  : 386
-  :END:
+   #+BEGIN_SRC ipython
+     for chunk in pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/scqtl-counts.txt.gz', index_col=0, chunksize=100):
+       if "ENSG00000155542" in chunk.index:
+         umi = chunk
+         break
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[18]:
+   :END:
 
 * Call mean-QTLs in the single cell data
 

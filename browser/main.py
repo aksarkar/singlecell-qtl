@@ -21,20 +21,20 @@ def update_gene(attr, old, new):
     return
   with sqlite3.connect(os.path.join(os.path.dirname(__file__), 'browser.db')) as conn:
     global gene
-    gene = next(conn.execute('select gene from nb_qtls where nb_qtls.gene == ?;', (gene_data.data['gene'][selected[0]],)))[0]
+    gene = next(conn.execute('select gene from qtls where qtls.gene == ?;', (gene_data.data['gene'][selected[0]],)))[0]
     print('Selected {}'.format(gene))
     ind_data.data = bokeh.models.ColumnDataSource.from_df(pd.read_sql(
       sql="""select genotype.ind, genotype.value as genotype, 
-          nb_log_mean.value as mean, nb_log_disp.value as disp, 
+          log_mean.value as mean, log_disp.value as disp, 
           logodds.value as logodds, bulk.value as bulk 
 
-          from nb_log_mean, nb_log_disp, logodds, bulk, genotype 
+          from log_mean, log_disp, logodds, bulk, genotype 
 
-          where nb_log_mean.gene == nb_log_disp.gene and nb_log_mean.ind == nb_log_disp.ind and
-          nb_log_disp.gene == logodds.gene and nb_log_disp.ind == logodds.ind and
+          where log_mean.gene == log_disp.gene and log_mean.ind == log_disp.ind and
+          log_disp.gene == logodds.gene and log_disp.ind == logodds.ind and
           logodds.gene == bulk.gene and logodds.ind == bulk.ind and 
           genotype.gene == bulk.gene and genotype.ind == bulk.ind and
-          nb_log_mean.gene == ?""",
+          log_mean.gene == ?""",
       params=(gene,),
       con=conn))
 
@@ -55,8 +55,8 @@ def update_umi(attr, old, new):
       counts, _ = np.histogram(umi['value'].values, bins=edges)
       umi_data.data = bokeh.models.ColumnDataSource.from_df(pd.DataFrame({'left': edges[:-1], 'right': edges[1:], 'count': counts}))
 
-      log_mean = float(next(conn.execute('select value from nb_log_mean where gene == ? and ind == ?', (gene, ind)))[0])
-      log_disp = float(next(conn.execute('select value from nb_log_disp where gene == ? and ind == ?', (gene, ind)))[0])
+      log_mean = float(next(conn.execute('select value from log_mean where gene == ? and ind == ?', (gene, ind)))[0])
+      log_disp = float(next(conn.execute('select value from log_disp where gene == ? and ind == ?', (gene, ind)))[0])
       logodds = float(next(conn.execute('select value from logodds where gene == ? and ind == ?', (gene, ind)))[0])
       n = np.exp(-log_disp)
       p = 1 / (1 + umi['size'] * np.exp(log_mean + log_disp).T)
@@ -74,10 +74,10 @@ def update_umi(attr, old, new):
 def init():
   with sqlite3.connect(os.path.join(os.path.dirname(__file__), 'browser.db')) as conn:
     gene_data.data = bokeh.models.ColumnDataSource.from_df(pd.read_sql(
-      sql="""select gene_info.gene as gene, gene_info.name, nb_qtls.id, 
-      nb_qtls.p_bulk, nb_qtls.beta_bulk, nb_qtls.p_sc, nb_qtls.beta_sc
-      from gene_info, nb_qtls 
-      where gene_info.gene == nb_qtls.gene
+      sql="""select gene_info.gene as gene, gene_info.name, qtls.id, 
+      qtls.p_bulk, qtls.beta_bulk, qtls.p_sc, qtls.beta_sc
+      from gene_info, qtls 
+      where gene_info.gene == qtls.gene
       order by p_bulk;""",
       con=conn))
 
