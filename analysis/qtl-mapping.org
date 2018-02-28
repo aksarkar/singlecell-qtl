@@ -32,7 +32,7 @@
   #+CALL: ipython3(memory="4G", venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 43812328
+  : Submitted batch job 43896725
 
   #+NAME: qtl-imports
   #+BEGIN_SRC ipython
@@ -44,11 +44,6 @@
   #+END_SRC
 
   #+RESULTS: qtl-imports
-  :RESULTS:
-  # Out[1]:
-  :END:
-
-  #+RESULTS:
   :RESULTS:
   # Out[1]:
   :END:
@@ -69,6 +64,177 @@
 
   #+RESULTS:
   : Submitted batch job 42223832
+
+* Test bulk eQTLs against single cell NB means
+
+  Estimate a lower bound on the replication rate by:
+
+  1. For each individual, for each gene, estimate a mean and dispersion in the
+     single cell data ignoring zero inflation (i.e., just fit a negative
+     binomial model)
+  2. For each bulk RNA-Seq eQTL-gene pair, test the SNP against the estimated
+     means
+
+  Read the estimated parameters (phenotypes) then center them.
+
+  #+BEGIN_SRC ipython
+    mean = (pd.read_table('/scratch/midway2/aksarkar/singlecell/mean2.txt.gz', sep=' ', index_col=0)
+            .transform(lambda x: x - x.mean(), axis=1))
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[2]:
+  :END:
+
+  Read the bulk eQTLs (nominally significant).
+
+  #+BEGIN_SRC ipython
+    def parse_bulk_qtl_record(row):
+      gene, _ = row[0].split('.')
+      id_, *_ = row[5].split('.')
+      return pd.Series({'gene': gene, 'id': id_, 'beta': row.iloc[-3], 'p_bulk': row.iloc[-1]})
+    bulk_qtls = (pd.read_table('/project2/gilad/singlecell-qtl/bulk/permutations.all.RNAseq_run.fixed.txt.gz', sep=' ', header=None)
+                 .fillna('')
+                 .apply(parse_bulk_qtl_record, axis=1))
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[3]:
+  :END:
+
+  Read the bulk eQTLs (significant by permutation test).
+
+  #+BEGIN_SRC ipython
+    def parse_perm_bulk_qtl_record(row):
+      gene, *_ = row[0].split('.')
+      id_, chr_, pos = row[1].split('.')
+      return pd.Series({'gene': gene, 'id': id_, 'chr': chr_, 'pos': pos, 'p_bulk': row.iloc[-1]})
+    perm_bulk_qtls = (pd.read_table('/project2/gilad/singlecell-qtl/bulk/permutations.all.RNAseq_run.fixed.txt.gz.bh.txt', sep=' ', header=0)
+                      .apply(parse_perm_bulk_qtl_record, axis=1))
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[4]:
+  :END:
+
+  Test each bulk QTL-gene pair in the single cell data. Mean-impute and
+  center genotypes.
+
+  #+BEGIN_SRC ipython
+    def parse_vcf(record):
+      geno = [sum(float(h) for h in g.split('/')) if '.' not in g else -1 for g in record[9:]]
+      return pd.Series(geno)
+
+    def standardize(geno):
+      # Important: this has to be done after filtering to common individuals
+      orig_geno = geno.copy()
+      # Important: match the qtltools implementation
+      geno = np.ma.masked_less(geno.values, 0)
+      geno = geno.filled(geno.mean())
+      geno -= geno.mean()
+      return geno
+
+    def extract_qtl_gene_pair(bulk_qtls, means):
+      common_means, common_qtls = means.align(bulk_qtls.set_index('gene'), join='inner', axis=0)
+      header = pd.read_table('/project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz', skiprows=1, nrows=1, header=0)[9:]
+      genotypes = tabix.open('/project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz')
+      X, Y = (common_qtls
+              .apply(lambda x: parse_vcf(next(genotypes.query(x['chr'], int(x['pos']) - 1, int(x['pos'])))), axis=1)
+              .rename(columns={i: ind for i, ind in enumerate(header.columns[9:])})
+              .align(common_means, join='inner', axis=None))
+      X = X.apply(standardize, axis=1)
+      return X, Y
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[53]:
+  :END:
+
+  #+BEGIN_SRC ipython
+    X, Y = extract_qtl_gene_pair(perm_bulk_qtls, mean)
+    result = []
+    _sf = st.chi2(1).sf
+    for (_, x), (name, y) in zip(X.iterrows(), Y.iterrows()):
+      if np.isclose(x.std(), 0):
+        print('Skipping {}'.format(name))
+        continue
+      beta, rss, *_ = np.linalg.lstsq(x.values.reshape(-1, 1), y.values.ravel(), rcond=-1)
+      sigma2 = rss / y.shape[0]
+      se = sigma2 / np.inner(x.values, x.values)
+      pval = _sf(np.square(beta / se))
+      result.append({'gene': name, 'beta': beta[0], 'p_sc': pval.ravel()[0]})
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[54]:
+  :END:
+
+  #+BEGIN_SRC ipython
+    merged = (bulk_qtls.merge(pd.DataFrame.from_dict(result), on='gene', suffixes=['_bulk', '_sc'])
+              .set_index('gene')
+              .sort_values('p_bulk')
+              .reset_index()[['gene', 'id', 'p_bulk', 'beta_bulk', 'p_sc', 'beta_sc']])
+    merged.to_csv('/home/aksarkar/projects/singlecell-qtl/data/nb-mean-qtls.txt.gz', compression='gzip', sep=' ')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[55]:
+  :END:
+
+  #+BEGIN_SRC ipython
+    X.to_csv('/home/aksarkar/projects/singlecell-qtl/data/bulk-qtl-genotypes.txt.gz', compression='gzip', sep=' ') 
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[56]:
+  :END:
+
+  Count how many bulk QTLs replicate in the single cell data at FDR 5%.
+
+  #+BEGIN_SRC ipython
+    def bh(df, column, fdr=0.05):
+      num_tests = df.shape[0]
+      return np.logical_and.accumulate(df.sort_values(column)[column] < fdr * np.arange(1, num_tests + 1) / num_tests)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[9]:
+  :END:
+
+  #+BEGIN_SRC ipython
+    bulk_fdr_pass = bh(merged, 'p_bulk')
+    sc_fdr_pass = bh(merged, 'p_sc')
+    replicated = merged[np.logical_and(*bulk_fdr_pass.align(sc_fdr_pass))]
+    replicated.shape[0], replicated.shape[0] / merged.shape[0]
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[57]:
+  : (902, 0.9636752136752137)
+  :END:
+
+  Count how many bulk QTLs replicate in the single cell data at FDR 5% and have
+  the same sign.
+
+  #+BEGIN_SRC ipython
+    sign_pass = (replicated['beta_bulk'] * replicated['beta_sc']).values > 0
+    replicated[sign_pass].shape[0], sign_pass.sum() / replicated.shape[0]
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[58]:
+  : (785, 0.8702882483370288)
+  :END:
 
 * Test bulk eQTLs in the single cell data
 
@@ -259,7 +425,7 @@
 
   #+RESULTS: get-gene-info
   :RESULTS:
-  # Out[14]:
+  # Out[13]:
   :END:
 
   #+NAME: write-pheno-def

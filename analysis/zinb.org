@@ -51,10 +51,10 @@
 
   Then, the log-likelihood of the data is:
 
-  \[ \ln p(r_{ijk} \mid r_{ijk} = 0, \cdot) = -\ln(\pi_\cdot + (1 - \pi_{\cdot})
-  \exp(\ln p(r_{ijk} \mid R_{ij}, \mu_{ik}, \phi_{ik}))) \]
-
-  \[ \ln p(r_{ijk} \mid r_{ijk} > 0, \cdot) = \ln(1 - \pi_{\cdot}) + \ln p(r_{ijk} \mid R_{ij}, \mu_{ik}, \phi_{ik})) \]
+  \[ \ln p(r_{ijk} \mid \cdot) = -\ln(\pi_\cdot + (1 -  \pi_{\cdot}) p(r_{ijk}
+    \mid R_{ij}, \mu_{ik}, \phi_{ik}))\ \text{if}\ r_{ijk} = 0 \]
+  \[ \ln p(r_{ijk} \mid \cdot) = \ln(1 - \pi_{\cdot}) + \ln p(r_{ijk} \mid
+    R_{ij}, \mu_{ik}, \phi_{ik})\ \text{otherwise} \]
 
 * Setup                                                            :noexport:
 
@@ -133,7 +133,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[3]:
+  # Out[167]:
   :END:
 
   Compute size factors.
@@ -272,7 +272,7 @@
         elif ind_dropout:
           raise ValueError('Cannot specify individual-specific dropout without gene-specific dropout')
         else:
-          llik = tf.reduce_sum(
+          llik = tf.reduce_mean(
             nb_llik(umi, size_factor * tf.matmul(onehot, mean),
                     tf.matmul(onehot, inv_disp)))
 
@@ -451,24 +451,24 @@
   :END:
 
   #+BEGIN_SRC sh :eval never-export :exports none
-    sbatch --partition=gpu2 --gres=gpu:1 --mem=16G --time=120 --job-name=tfnb --output=tfnb.out --error=tfnb.err
+    sbatch --partition=gpu2 --gres=gpu:1 --mem=16G --time=60 --job-name=tfnb --output=tfnb.out --error=tfnb.err
     #!/bin/bash
     source activate scqtl
     python tensorflow-nb.py
   #+END_SRC
 
   #+RESULTS:
-  : Submitted batch job 43203399
+  : Submitted batch job 43884214
 
   #+BEGIN_SRC sh :exports none
-    sacct -j 43203399 -o Elapsed
+    sacct -j 43884214 -o Elapsed
   #+END_SRC
 
   #+RESULTS:
   |    Elapsed |
   | ---------- |
-  |   00:38:18 |
-  |   00:38:18 |
+  |   00:36:49 |
+  |   00:36:49 |
 
   Check the goodness of fit.
 

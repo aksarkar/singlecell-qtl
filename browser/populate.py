@@ -22,11 +22,16 @@ def melt_write(df, conn, **kwargs):
    .melt(id_vars='gene', var_name='ind')
    .to_sql(con=conn, **default_kwargs))
 
+nb_mean = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/mean2.txt.gz', index_col='gene', sep=' ')
+nb_disp = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/dispersion2.txt.gz', index_col='gene', sep=' ')
+
 mean = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zi2-mean.txt.gz', index_col='gene', sep=' ')
 disp = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zi2-dispersion.txt.gz', index_col='gene', sep=' ')
 dropout = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zi2-dropout.txt.gz', index_col='gene', sep=' ')
 
 with sqlite3.connect(outfile) as conn:
+  melt_write(nb_mean, conn, name='nb_log_mean')
+  melt_write(nb_disp, conn, name='nb_log_disp')
   melt_write(mean, conn, name='log_mean')
   melt_write(disp, conn, name='log_disp')
   melt_write(dropout, conn, name='logodds')
@@ -46,7 +51,9 @@ with sqlite3.connect(outfile) as conn:
 
 with sqlite3.connect(outfile) as conn:
   (pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zi2-mean-qtls.txt.gz', sep=' ', index_col='gene')
-   .to_sql('qtls', con=conn, if_exists='replace'))
+   .to_sql('zinb2_qtls', con=conn, if_exists='replace'))
+  (pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/nb-mean-qtls.txt.gz', sep=' ', index_col='gene')
+   .to_sql('nb_qtls', con=conn, if_exists='replace'))
 
 annotations = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/scqtl-annotation.txt')
 keep_genes = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/genes-pass-filter.txt', index_col=0, header=None)
