@@ -16,7 +16,7 @@
 
   Here, we present the following analyses:
 
-  1. [[*Test bulk eQTLs in the single cell data][We replicate eQTLs]] discovered in matched bulk RNA-Seq
+  1. [[*Replicate bulk eQTLs in the single cell data][We replicate eQTLs]] discovered in matched bulk RNA-Seq
   2. [[*Call mean-QTLs in the single cell data][We call mean QTLs]] in the scRNA-Seq data and replicate in bulk
   3. [[*Dispersion-QTL calling][We call robustness QTLs]] in the scRNA-Seq data
 
@@ -32,7 +32,7 @@
   #+CALL: ipython3(memory="4G", venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 43910732
+  : Submitted batch job 43917686
 
   #+NAME: qtl-imports
   #+BEGIN_SRC ipython
@@ -45,7 +45,7 @@
 
   #+RESULTS: qtl-imports
   :RESULTS:
-  # Out[1]:
+  # Out[3]:
   :END:
 
 * Genotype processing
@@ -308,36 +308,54 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[2]:
+   # Out[8]:
    :END:
 
-   #+CALL: replication-test()
+   #+CALL: replication-tests()
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[10]:
+   :END:
 
    Write out tables for the interactive browser.
 
    #+BEGIN_SRC ipython
-     merged.to_csv('/home/aksarkar/projects/singlecell-qtl/data/zinb-mean-qtls.txt.gz', compression='gzip', sep=' ')
+     merged.to_csv('/home/aksarkar/projects/singlecell-qtl/data/zinb2-mean-qtls.txt.gz', compression='gzip', sep=' ')
    #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[11]:
+   :END:
 
    Estimate the replication rate.
 
    #+CALL: replication-rate()
 
+   #+RESULTS:
+   :RESULTS:
+   # Out[12]:
+   : (894, 0.9551282051282052)
+   :END:
+
    Estimate the concordance.
 
    #+CALL: effect-concordance()
 
-   #+BEGIN_SRC ipython
-     for chunk in pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/scqtl-counts.txt.gz', index_col=0, chunksize=100):
-       if "ENSG00000155542" in chunk.index:
-         umi = chunk
-         break
-   #+END_SRC
-
    #+RESULTS:
    :RESULTS:
-   # Out[18]:
+   # Out[13]:
+   : (752, 0.8411633109619687)
    :END:
+** Conclusions
+
+   #+ATTR_HTML: :class table
+   | Model | Replication rate | Concordance |
+   |-------+------------------+-------------|
+   | NB    |            96.4% |       87.0% |
+   | ZINB  |            95.5% |       84.1% |
+   | ZINB2 |            95.5% |       84.1% |
 
 * Call mean-QTLs in the single cell data
 

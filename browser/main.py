@@ -65,7 +65,9 @@ def update_umi(attr, old, new):
       assert (p <= 1).all()
       G = st.nbinom(n=n, p=p).pmf
       grid = np.arange(19)
-      exp_count = umi.shape[0] * np.array([G(x).mean() for x in grid])
+      pmf = sp.expit(-logodds) * np.array([G(x).mean() for x in grid])
+      pmf[0] += sp.expit(logodds)
+      exp_count = umi.shape[0] * pmf
       dist_data.data = bokeh.models.ColumnDataSource.from_df(pd.DataFrame({'x': .5 + grid, 'y': exp_count}))
     else:
       umi_data.data = bokeh.models.ColumnDataSource.from_df(pd.DataFrame(columns=['left', 'right', 'count']))

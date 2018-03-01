@@ -22,8 +22,8 @@ def melt_write(df, conn, **kwargs):
    .melt(id_vars='gene', var_name='ind')
    .to_sql(con=conn, **default_kwargs))
 
-mean = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zi-mean.txt.gz', index_col='gene', sep=' ')
-disp = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zi-dispersion.txt.gz', index_col='gene', sep=' ')
+mean = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zi2-mean.txt.gz', index_col='gene', sep=' ')
+disp = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zi2-dispersion.txt.gz', index_col='gene', sep=' ')
 dropout = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zi2-dropout.txt.gz', index_col='gene', sep=' ')
 
 with sqlite3.connect(outfile) as conn:
