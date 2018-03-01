@@ -22,14 +22,14 @@ def melt_write(df, conn, **kwargs):
    .melt(id_vars='gene', var_name='ind')
    .to_sql(con=conn, **default_kwargs))
 
-mean = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zi2-mean.txt.gz', index_col='gene', sep=' ')
-disp = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zi2-dispersion.txt.gz', index_col='gene', sep=' ')
-dropout = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zi2-dropout.txt.gz', index_col='gene', sep=' ')
+mean = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zi-mean.txt.gz', index_col='gene', sep=' ')
+disp = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zi-dispersion.txt.gz', index_col='gene', sep=' ')
+dropout = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zi-dropout.txt.gz', index_col='gene', sep=' ').rename(columns={'0': 'value'})
 
 with sqlite3.connect(outfile) as conn:
   melt_write(mean, conn, name='log_mean')
   melt_write(disp, conn, name='log_disp')
-  melt_write(dropout, conn, name='logodds')
+  dropout.to_sql(name='logodds', con=conn, if_exists='replace')
 
 genotypes = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/bulk-qtl-genotypes.txt.gz', index_col='gene', sep=' ')
 with sqlite3.connect(outfile) as conn:
@@ -64,3 +64,4 @@ with sqlite3.connect(outfile) as conn:
       annotations['size'] += chunk.sum(axis=0)
       chunk.reset_index().melt(id_vars='gene', var_name='sample').to_sql(name='umi', con=conn, index=False, if_exists='append')
   annotations[['chip_id', 'size']].to_sql(name='annotation', con=conn, if_exists='replace')
+  conn.execute('create index ix_umi on umi(gene, sample);')

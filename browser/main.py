@@ -30,11 +30,10 @@ def update_gene(attr, old, new):
 
           from log_mean, log_disp, logodds, bulk, genotype 
 
-          where log_mean.gene == log_disp.gene and log_mean.ind == log_disp.ind and
-          log_disp.gene == logodds.gene and log_disp.ind == logodds.ind and
-          logodds.gene == bulk.gene and logodds.ind == bulk.ind and 
-          genotype.gene == bulk.gene and genotype.ind == bulk.ind and
-          log_mean.gene == ?""",
+          where log_mean.gene == ? and log_mean.gene == log_disp.gene and
+          log_disp.gene == logodds.gene and logodds.gene == bulk.gene and 
+          bulk.gene == genotype.gene and log_mean.ind == log_disp.ind and 
+          log_disp.ind == genotype.ind and genotype.ind == bulk.ind""",
       params=(gene,),
       con=conn))
 
@@ -57,7 +56,7 @@ def update_umi(attr, old, new):
 
       log_mean = float(next(conn.execute('select value from log_mean where gene == ? and ind == ?', (gene, ind)))[0])
       log_disp = float(next(conn.execute('select value from log_disp where gene == ? and ind == ?', (gene, ind)))[0])
-      logodds = float(next(conn.execute('select value from logodds where gene == ? and ind == ?', (gene, ind)))[0])
+      logodds = float(next(conn.execute('select value from logodds where gene == ?', (gene,)))[0])
       n = np.exp(-log_disp)
       p = 1 / (1 + umi['size'] * np.exp(log_mean + log_disp).T)
       assert n > 0
