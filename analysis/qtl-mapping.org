@@ -81,7 +81,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[4]:
+  # Out[24]:
   :END:
 
   Read the bulk eQTLs (significant by permutation test).
@@ -97,7 +97,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[5]:
+  # Out[25]:
   :END:
 
   Test each bulk QTL-gene pair in the single cell data. Mean-impute and
@@ -144,7 +144,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[7]:
+  # Out[23]:
   :END:
 
 ** NB model
@@ -348,6 +348,118 @@
    # Out[13]:
    : (752, 0.8411633109619687)
    :END:
+** Look at discordance between NB/ZINB
+
+   #+BEGIN_SRC ipython
+     nb_qtls = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/nb-mean-qtls.txt.gz', sep=' ', index_col=0)
+     zinb_qtls = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zinb-mean-qtls.txt.gz', sep=' ', index_col=0)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[68]:
+   :END:
+   
+   #+BEGIN_SRC ipython
+     nb_qtls['pass'] = bh(nb_qtls, 'p_bulk') & bh(nb_qtls, 'p_sc')
+     zinb_qtls['pass'] = bh(zinb_qtls, 'p_bulk') & bh(zinb_qtls, 'p_sc')
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[69]:
+   :END:
+
+   #+BEGIN_SRC ipython
+     nb_qtls[~nb_qtls['pass'] & zinb_qtls['pass']][['gene']]
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[71]:
+   #+BEGIN_EXAMPLE
+     gene
+     49   ENSG00000138107
+     146  ENSG00000134815
+     246  ENSG00000136731
+     271  ENSG00000143776
+     294  ENSG00000106341
+     324  ENSG00000157036
+     352  ENSG00000185619
+     455  ENSG00000160214
+     477  ENSG00000184014
+     511  ENSG00000134987
+     539  ENSG00000119723
+     548  ENSG00000224870
+     575  ENSG00000213347
+     577  ENSG00000176473
+     609  ENSG00000103657
+     611  ENSG00000106785
+     615  ENSG00000122490
+     640  ENSG00000155275
+     653  ENSG00000152217
+     687  ENSG00000160216
+     781  ENSG00000173214
+     787  ENSG00000092871
+     796  ENSG00000176715
+     802  ENSG00000128335
+     845  ENSG00000167625
+     892  ENSG00000169718
+     916  ENSG00000170471
+     922  ENSG00000089335
+     926  ENSG00000079432
+   #+END_EXAMPLE
+   :END:
+
+   #+BEGIN_SRC ipython
+     nb_qtls[nb_qtls['pass'] & ~zinb_qtls['pass']][['gene']]
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[78]:
+   #+BEGIN_EXAMPLE
+     gene
+     53   ENSG00000144712
+     173  ENSG00000148143
+     208  ENSG00000181481
+     211  ENSG00000141295
+     225  ENSG00000169814
+     235  ENSG00000163870
+     270  ENSG00000039319
+     288  ENSG00000185418
+     378  ENSG00000167840
+     436  ENSG00000072736
+     459  ENSG00000198589
+     465  ENSG00000187741
+     479  ENSG00000068001
+     482  ENSG00000117791
+     491  ENSG00000163820
+     529  ENSG00000104228
+     543  ENSG00000115339
+     546  ENSG00000033327
+     566  ENSG00000256269
+     585  ENSG00000005059
+     616  ENSG00000153015
+     641  ENSG00000172461
+     645  ENSG00000205356
+     650  ENSG00000044090
+     669  ENSG00000146909
+     700  ENSG00000172053
+     769  ENSG00000154265
+     800  ENSG00000139629
+     801  ENSG00000123992
+     805  ENSG00000251247
+     806  ENSG00000103966
+     821  ENSG00000130695
+     825  ENSG00000116212
+     884  ENSG00000183258
+     885  ENSG00000112357
+     912  ENSG00000185963
+     917  ENSG00000145604
+   #+END_EXAMPLE
+   :END:
+
 ** Conclusions
 
    #+ATTR_HTML: :class table
