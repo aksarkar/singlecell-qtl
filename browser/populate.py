@@ -35,15 +35,17 @@ with sqlite3.connect(outfile) as conn:
   (genotypes
    .reset_index()
    .melt(id_vars='gene', var_name='ind').to_sql(name='genotype', con=conn, index=False, if_exists='replace'))
+  conn.execute('create index ix_genotype on genotype(gene, ind);')
 
 bulk = (pd.read_table('/project2/gilad/singlecell-qtl/bulk/counts_RNAseq_iPSC.txt', sep=' ', index_col='gene')
         .rename(index=lambda x: x.split('.')[0], columns=lambda x: 'NA{}'.format(x)))
 bulk = np.log((bulk + 1) / bulk.sum(axis=0))
 with sqlite3.connect(outfile) as conn:
   melt_write(bulk, conn, name='bulk')
+  conn.execute('create index ix_bulk on bulk(gene, ind);')
 
 with sqlite3.connect(outfile) as conn:
-  (pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zinb-mean-qtls.txt.gz', sep=' ', index_col='gene')
+  (pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zinb2-mean-qtls.txt.gz', sep=' ', index_col='gene')
    .to_sql('qtls', con=conn, if_exists='replace'))
 
 annotations = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/scqtl-annotation.txt')

@@ -32,20 +32,21 @@
   #+CALL: ipython3(memory="4G", venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 43917686
+  : Submitted batch job 44016282
 
   #+NAME: qtl-imports
   #+BEGIN_SRC ipython
     import os.path
     import numpy as np
     import scipy.stats as st
+    import sqlite3
     import pandas as pd
     import tabix
   #+END_SRC
 
   #+RESULTS: qtl-imports
   :RESULTS:
-  # Out[3]:
+  # Out[5]:
   :END:
 
 * Genotype processing
@@ -81,7 +82,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[24]:
+  # Out[16]:
   :END:
 
   Read the bulk eQTLs (significant by permutation test).
@@ -97,7 +98,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[25]:
+  # Out[17]:
   :END:
 
   Test each bulk QTL-gene pair in the single cell data. Mean-impute and
@@ -131,7 +132,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[6]:
+  # Out[18]:
   :END:
 
   Define replication as significant at FDR 5% in both bulk and single cell.
@@ -144,7 +145,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[23]:
+  # Out[19]:
   :END:
 
 ** NB model
@@ -348,6 +349,63 @@
    # Out[13]:
    : (752, 0.8411633109619687)
    :END:
+
+** ZINB2 via BFGS
+
+   Read the parameters estimated by BFGS.
+
+   #+BEGIN_SRC ipython
+     with sqlite3.connect('/scratch/midway2/aksarkar/singlecell/browser.db') as conn:
+       mean = (pd.read_sql('select gene, ind, zinb2_log_mean from params;', con=conn)
+               .pivot(index='gene', columns='ind', values='zinb2_log_mean')
+               .transform(lambda x: x - x.mean(), axis=1))
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[32]:
+   :END:
+
+   #+CALL: replication-tests()
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[34]:
+   :END:
+
+   Write out tables for the interactive browser.
+
+   #+BEGIN_SRC ipython
+     with sqlite3.connect('/scratch/midway2/aksarkar/singlecell/browser.db') as conn:
+       merged.to_sql('qtls', con=conn, if_exists='replace')
+       conn.execute('create index ix_qtl on qtls(gene);')
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[41]:
+   :END:
+
+   Estimate the replication rate.
+
+   #+CALL: replication-rate()
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[35]:
+   : (893, 0.9540598290598291)
+   :END:
+
+   Estimate the concordance.
+
+   #+CALL: effect-concordance()
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[36]:
+   : (779, 0.8723404255319149)
+   :END:
+
 ** Look at discordance between NB/ZINB
 
    #+BEGIN_SRC ipython
