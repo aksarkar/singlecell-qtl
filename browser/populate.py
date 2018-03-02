@@ -3,7 +3,7 @@ import pandas as pd
 import sqlite3
 import os.path
 
-outfile = os.path.join(os.path.dirname(__file__), 'browser.db')
+outfile = '/scratch/midway2/aksarkar/singlecell/browser.db'
 
 gene_info = (pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/scqtl-genes.txt.gz')
              .set_index('gene')
@@ -14,6 +14,14 @@ gene_info = (pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/scqtl-ge
 with sqlite3.connect(outfile) as conn:
   gene_info.to_sql(name='gene_info', con=conn, if_exists='replace')
 
+with sqlite3.connect(outfile) as conn:
+  conn.execute('drop table if exists params;')
+  for i in range(20):
+    for chunk in pd.read_table('/scratch/midway2/aksarkar/singlecell/result-{}.txt.gz'.format(i), sep=' ', chunksize=1000):
+      chunk.columns = ['gene', 'ind', 'nb_log_mean', 'nb_log_disp', 'nb_success', 'zinb2_log_mean', 'zinb2_log_disp', 'zinb2_logodds', 'zinb_success']
+      chunk.to_sql(name='params', con=conn, index=False, if_exists='append')
+  conn.execute('create index ix_params on params(gene, ind);')
+
 def melt_write(df, conn, **kwargs):
   default_kwargs = {'index': False, 'if_exists': 'replace'}
   default_kwargs.update(kwargs)
@@ -22,15 +30,6 @@ def melt_write(df, conn, **kwargs):
    .melt(id_vars='gene', var_name='ind')
    .to_sql(con=conn, **default_kwargs))
 
-mean = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zi-mean.txt.gz', index_col='gene', sep=' ')
-disp = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zi-dispersion.txt.gz', index_col='gene', sep=' ')
-dropout = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/zi-dropout.txt.gz', index_col='gene', sep=' ').rename(columns={'0': 'value'})
-
-with sqlite3.connect(outfile) as conn:
-  melt_write(mean, conn, name='log_mean')
-  melt_write(disp, conn, name='log_disp')
-  dropout.to_sql(name='logodds', con=conn, if_exists='replace')
-
 genotypes = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/bulk-qtl-genotypes.txt.gz', index_col='gene', sep=' ')
 with sqlite3.connect(outfile) as conn:
   (genotypes
@@ -38,8 +37,7 @@ with sqlite3.connect(outfile) as conn:
    .melt(id_vars='gene', var_name='ind').to_sql(name='genotype', con=conn, index=False, if_exists='replace'))
 
 bulk = (pd.read_table('/project2/gilad/singlecell-qtl/bulk/counts_RNAseq_iPSC.txt', sep=' ', index_col='gene')
-        .rename(index=lambda x: x.split('.')[0], columns=lambda x: 'NA{}'.format(x))
-        .align(mean, axis=None, join='inner')[0])
+        .rename(index=lambda x: x.split('.')[0], columns=lambda x: 'NA{}'.format(x)))
 bulk = np.log((bulk + 1) / bulk.sum(axis=0))
 with sqlite3.connect(outfile) as conn:
   melt_write(bulk, conn, name='bulk')

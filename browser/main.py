@@ -12,6 +12,8 @@ import scipy.stats as st
 import scipy.special as sp
 import sqlite3
 
+db = '/scratch/midway2/aksarkar/singlecell/browser.db'
+
 # This needs to be global to be visible to callbacks
 gene = None
 
@@ -19,27 +21,22 @@ def update_gene(attr, old, new):
   selected = gene_data.selected['1d']['indices']
   if not selected:
     return
-  with sqlite3.connect(os.path.join(os.path.dirname(__file__), 'browser.db')) as conn:
+  with sqlite3.connect(db) as conn:
     global gene
     gene = next(conn.execute('select gene from qtls where qtls.gene == ?;', (gene_data.data['gene'][selected[0]],)))[0]
     print('Selected {}'.format(gene))
     ind_data.data = bokeh.models.ColumnDataSource.from_df(pd.read_sql(
-      sql="""select genotype.ind, genotype.value as genotype, 
-          log_mean.value as mean, log_disp.value as disp, 
-          logodds.value as logodds, bulk.value as bulk 
-
-          from log_mean, log_disp, logodds, bulk, genotype 
-
-          where log_mean.gene == ? and log_mean.gene == log_disp.gene and
-          log_disp.gene == logodds.gene and logodds.gene == bulk.gene and 
-          bulk.gene == genotype.gene and log_mean.ind == log_disp.ind and 
-          log_disp.ind == genotype.ind and genotype.ind == bulk.ind""",
+      sql="""select genotype.ind, genotype.value as genotype, params.zinb2_log_mean as
+      mean, params.zinb2_log_disp as disp, params.zinb2_logodds as logodds,
+      bulk.value as bulk from genotype, bulk, params where genotype.gene == ?
+      and genotype.gene == bulk.gene and bulk.gene == params.gene and
+      genotype.ind == bulk.ind and bulk.ind == params.ind;""",
       params=(gene,),
       con=conn))
 
 def update_umi(attr, old, new):
   selected = ind_data.selected['1d']['indices']
-  with sqlite3.connect(os.path.join(os.path.dirname(__file__), 'browser.db')) as conn:
+  with sqlite3.connect(db) as conn:
     if selected:
       ind = ind_data.data['ind'][selected[0]]
       print("Selected {}, {}".format(ind, gene))
@@ -54,11 +51,9 @@ def update_umi(attr, old, new):
       counts, _ = np.histogram(umi['value'].values, bins=edges)
       umi_data.data = bokeh.models.ColumnDataSource.from_df(pd.DataFrame({'left': edges[:-1], 'right': edges[1:], 'count': counts}))
 
-      log_mean = float(next(conn.execute('select value from log_mean where gene == ? and ind == ?', (gene, ind)))[0])
-      log_disp = float(next(conn.execute('select value from log_disp where gene == ? and ind == ?', (gene, ind)))[0])
-      logodds = float(next(conn.execute('select value from logodds where gene == ?', (gene,)))[0])
-      n = np.exp(-log_disp)
-      p = 1 / (1 + umi['size'] * np.exp(log_mean + log_disp).T)
+      log_mean, log_disp, logodds = [float(x) for x in next(conn.execute('select zinb2_log_mean, zinb2_log_disp, zinb2_logodds from params where gene == ? and ind == ?', (gene, ind)))]
+      n = np.exp(log_disp)
+      p = 1 / (1 + umi['size'] * np.exp(log_mean - log_disp).T)
       assert n > 0
       assert (p >= 0).all()
       assert (p <= 1).all()
@@ -73,7 +68,7 @@ def update_umi(attr, old, new):
       dist_data.data = bokeh.models.ColumnDataSource.from_df(pd.DataFrame(columns=['x', 'y']))
 
 def init():
-  with sqlite3.connect(os.path.join(os.path.dirname(__file__), 'browser.db')) as conn:
+  with sqlite3.connect(db) as conn:
     gene_data.data = bokeh.models.ColumnDataSource.from_df(pd.read_sql(
       sql="""select gene_info.gene as gene, gene_info.name, qtls.id, 
       qtls.p_bulk, qtls.beta_bulk, qtls.p_sc, qtls.beta_sc

@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2018-02-28 Wed 09:38 -->
+<!-- 2018-03-02 Fri 10:23 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>QTL mapping pipeline</title>
@@ -315,7 +315,7 @@ Estimate a lower bound on the replication rate using the following procedure:
 </p>
 
 <ol class="org-ol">
-<li>For each individual, for each gene, <a href="zinb.html#org654b8ce">estimate a mean and dispersion in the
+<li>For each individual, for each gene, <a href="zinb.html#orgef1a628">estimate a mean and dispersion in the
 single cell data ignoring zero inflation</a> (i.e., just fit a negative
 binomial model)</li>
 <li>For each bulk RNA-Seq eQTL-gene pair, test the SNP against the estimated
@@ -404,7 +404,7 @@ replicated[sign_pass].shape[0], sign_pass.<span class="org-builtin">sum</span>()
 <h3 id="orgb7c3e0e">ZINB model</h3>
 <div class="outline-text-3" id="text-orgb7c3e0e">
 <p>
-Estimate replication on <a href="zinb.html#org2884607">means estimated assuming a gene-specific dropout
+Estimate replication on <a href="zinb.html#orgc07a1fb">means estimated assuming a gene-specific dropout
 parameters</a>.  Accounting for zero-inflation should push estimated means away
 from zero, and should improve concordance for lowly expressed genes.
 </p>
@@ -494,6 +494,107 @@ Estimate the concordance.
 </pre>
 </div>
 </div>
+<div id="outline-container-org651b6c4" class="outline-3">
+<h3 id="org651b6c4">Look at discordance between NB/ZINB</h3>
+<div class="outline-text-3" id="text-org651b6c4">
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">nb_qtls</span> = pd.read_table(<span class="org-string">'/home/aksarkar/projects/singlecell-qtl/data/nb-mean-qtls.txt.gz'</span>, sep=<span class="org-string">' '</span>, index_col=0)
+<span class="org-variable-name">zinb_qtls</span> = pd.read_table(<span class="org-string">'/home/aksarkar/projects/singlecell-qtl/data/zinb-mean-qtls.txt.gz'</span>, sep=<span class="org-string">' '</span>, index_col=0)
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">nb_qtls</span>[<span class="org-string">'pass'</span>] = bh(nb_qtls, <span class="org-string">'p_bulk'</span>) &amp; bh(nb_qtls, <span class="org-string">'p_sc'</span>)
+<span class="org-variable-name">zinb_qtls</span>[<span class="org-string">'pass'</span>] = bh(zinb_qtls, <span class="org-string">'p_bulk'</span>) &amp; bh(zinb_qtls, <span class="org-string">'p_sc'</span>)
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-ipython">nb_qtls[~nb_qtls[<span class="org-string">'pass'</span>] &amp; zinb_qtls[<span class="org-string">'pass'</span>]][[<span class="org-string">'gene'</span>]]
+</pre>
+</div>
+
+<pre class="example">
+gene
+49   ENSG00000138107
+146  ENSG00000134815
+246  ENSG00000136731
+271  ENSG00000143776
+294  ENSG00000106341
+324  ENSG00000157036
+352  ENSG00000185619
+455  ENSG00000160214
+477  ENSG00000184014
+511  ENSG00000134987
+539  ENSG00000119723
+548  ENSG00000224870
+575  ENSG00000213347
+577  ENSG00000176473
+609  ENSG00000103657
+611  ENSG00000106785
+615  ENSG00000122490
+640  ENSG00000155275
+653  ENSG00000152217
+687  ENSG00000160216
+781  ENSG00000173214
+787  ENSG00000092871
+796  ENSG00000176715
+802  ENSG00000128335
+845  ENSG00000167625
+892  ENSG00000169718
+916  ENSG00000170471
+922  ENSG00000089335
+926  ENSG00000079432
+</pre>
+
+<div class="org-src-container">
+<pre class="src src-ipython">nb_qtls[nb_qtls[<span class="org-string">'pass'</span>] &amp; ~zinb_qtls[<span class="org-string">'pass'</span>]][[<span class="org-string">'gene'</span>]]
+</pre>
+</div>
+
+<pre class="example">
+gene
+53   ENSG00000144712
+173  ENSG00000148143
+208  ENSG00000181481
+211  ENSG00000141295
+225  ENSG00000169814
+235  ENSG00000163870
+270  ENSG00000039319
+288  ENSG00000185418
+378  ENSG00000167840
+436  ENSG00000072736
+459  ENSG00000198589
+465  ENSG00000187741
+479  ENSG00000068001
+482  ENSG00000117791
+491  ENSG00000163820
+529  ENSG00000104228
+543  ENSG00000115339
+546  ENSG00000033327
+566  ENSG00000256269
+585  ENSG00000005059
+616  ENSG00000153015
+641  ENSG00000172461
+645  ENSG00000205356
+650  ENSG00000044090
+669  ENSG00000146909
+700  ENSG00000172053
+769  ENSG00000154265
+800  ENSG00000139629
+801  ENSG00000123992
+805  ENSG00000251247
+806  ENSG00000103966
+821  ENSG00000130695
+825  ENSG00000116212
+884  ENSG00000183258
+885  ENSG00000112357
+912  ENSG00000185963
+917  ENSG00000145604
+</pre>
+</div>
+</div>
+
 <div id="outline-container-org401e631" class="outline-3">
 <h3 id="org401e631">Conclusions</h3>
 <div class="outline-text-3" id="text-org401e631">
@@ -540,7 +641,7 @@ Estimate the concordance.
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2018-02-28 Wed 09:38</p>
+<p class="date">Created: 2018-03-02 Fri 10:23</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>

@@ -69,7 +69,7 @@
   #+CALL: ipython3(memory="16G",venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 43955446
+  : Submitted batch job 43970709
 
   #+NAME: zinb-imports
   #+BEGIN_SRC ipython
@@ -214,6 +214,11 @@
                sp.gammaln(x + 1)).mean()
    #+END_SRC
 
+   #+RESULTS: np-zinb-impl
+   :RESULTS:
+   # Out[30]:
+   :END:
+
    #+RESULTS:
    :RESULTS:
    # Out[4]:
@@ -234,7 +239,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[5]:
+   # Out[28]:
    :END:
 
    Shard the data to parallelize over nodes.
@@ -270,22 +275,20 @@
 
    Process each chunk in parallel.
 
-   #+BEGIN_SRC ipython :eval never :tangle test.py :noweb tangle
+   #+BEGIN_SRC ipython :eval never :tangle /scratch/midway2/aksarkar/singlecell/np-zinb.py :noweb tangle
      <<zinb-imports>>
      import gzip
      import os
      import multiprocessing as mp
+     import sqlite3
 
      <<np-zinb-impl>>
 
      def fit_gene(chunk):
-       res = so.minimize(zinb, x0=[0, 0, 0], args=(chunk[:,0], chunk[:,1]), method='bfgs')
-       if res.success:
-         return res.x
-       res = so.minimize(zinb, x0=[0, 0, 0], args=(chunk[:,0], chunk[:,1]), method='cg')
-       if not res.success:
-         print(res)
-       return res.x
+       res0 = so.minimize(nb, x0=[0, 0], args=(chunk[:,0], chunk[:,1]))
+       pi0 = (chunk[:,0] == 0).sum() / chunk.shape[0] + 1e-8
+       res = so.minimize(zinb, x0=list(res0.x) + [sp.logit(pi0 + 1e-8)], args=(chunk[:,0], chunk[:,1]))
+       return list(res0.x) + [res0.success] + list(res.x) + [res.success]
 
      with mp.Pool() as pool:
        chunk = pd.read_table('/scratch/midway2/aksarkar/singlecell/chunk-{}.txt.gz'.format(os.getenv('SLURM_ARRAY_TASK_ID')))
@@ -295,30 +298,24 @@
        num_samples_per_ind = chunk.iloc[:num_samples]['chip_id'].value_counts().sort_index().values
        # Therefore we can just split on integer indices (instead of grouping)
        breaks = num_samples * np.arange(num_genes).reshape(-1, 1) + np.cumsum(num_samples_per_ind).reshape(1, -1)
-       breaks = breaks.ravel()[-1]
-       res = pool.map(fit_gene, np.split(chunk[['value', 'size']].values, breaks))
+       breaks = breaks.ravel()
+       res = pool.map(fit_gene, np.split(chunk[['value', 'size']].values, breaks[:-1]))
 
      with gzip.open('/scratch/midway2/aksarkar/singlecell/result-{}.txt.gz'.format(os.getenv('SLURM_ARRAY_TASK_ID')), 'wt') as f:
-       # The pool preserves the order of the output
-       seen = set()
-       for _, key in chunk[['gene', 'chip_id']].iterrows():
-         key = tuple(key)
-         if key not in seen:
-           gene, ind = key
-           log_mean, log_disp, logodds = res.pop(0)
-           print(gene, ind, log_mean, log_disp, logodds, file=f)
-           seen.add(key)
+       for b in breaks:
+         gene, ind = chunk.iloc[b - 1][['gene', 'chip_id']]
+         print(gene, ind, *res.pop(0), file=f)
    #+END_SRC
 
-   #+BEGIN_SRC sh
+   #+BEGIN_SRC sh :dir /scratch/midway2/aksarkar/singlecell
      sbatch --partition=broadwl --job-name="np-zinb" --mem=4G -a 0-20 -n1 -c28 --exclusive
      #!/bin/bash
      source activate scqtl
-     python test.py
+     python /scratch/midway2/aksarkar/singlecell/np-zinb.py
    #+END_SRC
 
    #+RESULTS:
-   : Submitted batch job 43955708
+   : Submitted batch job 43999447
 
 * Tensorflow implementation
 
@@ -679,14 +676,14 @@
   #+END_SRC
 
   #+BEGIN_SRC sh :eval never-export :exports none
-    sbatch --partition=gpu2 --gres=gpu:1 --mem=16G --time=70 --job-name=zinb --output=zinb.out --error=zinb.err
+    sbatch --partition=gpu2 --gres=gpu:1 --mem=16G --time=150 --job-name=zinb --output=zinb.out --error=zinb.err
     #!/bin/bash
     source activate scqtl
     python zinb.py
   #+END_SRC
 
   #+RESULTS:
-  : Submitted batch job 43907781
+  : Submitted batch job 43966390
 
   #+BEGIN_SRC sh :exports none
     sacct -j 43907781 -o Elapsed,MaxRSS,MaxVMSize
