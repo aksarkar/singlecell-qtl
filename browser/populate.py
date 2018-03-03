@@ -18,7 +18,7 @@ with sqlite3.connect(outfile) as conn:
   conn.execute('drop table if exists params;')
   for i in range(20):
     for chunk in pd.read_table('/scratch/midway2/aksarkar/singlecell/result-{}.txt.gz'.format(i), sep=' ', chunksize=1000):
-      chunk.columns = ['gene', 'ind', 'nb_log_mean', 'nb_log_disp', 'nb_success', 'zinb2_log_mean', 'zinb2_log_disp', 'zinb2_logodds', 'zinb_success']
+      chunk.columns = ['gene', 'ind', 'nb_log_mean', 'nb_log_disp', 'nb_nll', 'nb_success', 'zinb2_log_mean', 'zinb2_log_disp', 'zinb2_logodds', 'zinb_nll', 'zinb_success']
       chunk.to_sql(name='params', con=conn, index=False, if_exists='append')
   conn.execute('create index ix_params on params(gene, ind);')
 

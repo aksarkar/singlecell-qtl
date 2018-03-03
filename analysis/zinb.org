@@ -69,7 +69,7 @@
   #+CALL: ipython3(memory="16G",venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 43970709
+  : Submitted batch job 44039685
 
   #+NAME: zinb-imports
   #+BEGIN_SRC ipython
@@ -81,7 +81,7 @@
 
   #+RESULTS: zinb-imports
   :RESULTS:
-  # Out[1]:
+  # Out[5]:
   :END:
 
   #+BEGIN_SRC ipython
@@ -216,7 +216,7 @@
 
    #+RESULTS: np-zinb-impl
    :RESULTS:
-   # Out[30]:
+   # Out[1]:
    :END:
 
    #+RESULTS:
@@ -230,7 +230,7 @@
      import sqlite3
 
      def extract_data(ind, gene):
-       with sqlite3.connect('/home/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
+       with sqlite3.connect('/scratch/midway2/aksarkar/singlecell/browser.db') as conn:
          umi = pd.read_sql("""select umi.value, annotation.size from umi, annotation 
          where annotation.chip_id == ? and gene == ? and 
          umi.sample == annotation.sample;""", con=conn, params=(ind, gene))
@@ -239,7 +239,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[28]:
+   # Out[7]:
    :END:
 
    Shard the data to parallelize over nodes.
@@ -288,7 +288,7 @@
        res0 = so.minimize(nb, x0=[0, 0], args=(chunk[:,0], chunk[:,1]))
        pi0 = (chunk[:,0] == 0).sum() / chunk.shape[0] + 1e-8
        res = so.minimize(zinb, x0=list(res0.x) + [sp.logit(pi0 + 1e-8)], args=(chunk[:,0], chunk[:,1]))
-       return list(res0.x) + [res0.success] + list(res.x) + [res.success]
+       return list(res0.x) + [res0.fun, res0.success] + list(res.x) + [res.fun, res.success]
 
      with mp.Pool() as pool:
        chunk = pd.read_table('/scratch/midway2/aksarkar/singlecell/chunk-{}.txt.gz'.format(os.getenv('SLURM_ARRAY_TASK_ID')))
@@ -308,14 +308,26 @@
    #+END_SRC
 
    #+BEGIN_SRC sh :dir /scratch/midway2/aksarkar/singlecell
-     sbatch --partition=broadwl --job-name="np-zinb" --mem=4G -a 0-20 -n1 -c28 --exclusive
+     sbatch --partition=broadwl --job-name="np-zinb" --mem=4G -a 8 -n1 -c28 --exclusive
      #!/bin/bash
      source activate scqtl
      python /scratch/midway2/aksarkar/singlecell/np-zinb.py
    #+END_SRC
 
    #+RESULTS:
-   : Submitted batch job 43999447
+   : Submitted batch job 44039745
+
+   Populate the database.
+
+   #+BEGIN_SRC ipython :async t
+     with sqlite3.connect('/scratch/midway2/aksarkar/singlecell/browser.db') as conn:
+       conn.execute('drop table if exists params;')
+       for i in range(20):
+         for chunk in pd.read_table('/scratch/midway2/aksarkar/singlecell/result-{}.txt.gz'.format(i), sep=' ', chunksize=1000):
+           chunk.columns = ['gene', 'ind', 'nb_log_mean', 'nb_log_disp', 'nb_nll', 'nb_success', 'zinb2_log_mean', 'zinb2_log_disp', 'zinb2_logodds', 'zinb_nll', 'zinb_success']
+           chunk.to_sql(name='params', con=conn, index=False, if_exists='append')
+       conn.execute('create index ix_params on params(gene, ind);')
+   #+END_SRC
 
 * Tensorflow implementation
 
