@@ -62,10 +62,10 @@
   #+RESULTS:
   : 1
 
-  #+CALL: ipython3(memory="16G",venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
+  #+CALL: ipython3(memory="4G",venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 44067094
+  : Submitted batch job 44101193
 
   #+NAME: zinb-imports
   #+BEGIN_SRC ipython
@@ -78,7 +78,7 @@
 
   #+RESULTS: zinb-imports
   :RESULTS:
-  # Out[4]:
+  # Out[1]:
   :END:
 
   #+BEGIN_SRC ipython
@@ -723,30 +723,46 @@
 
    Process each chunk in parallel.
 
-   #+BEGIN_SRC ipython :eval never :tangle /scratch/midway2/aksarkar/singlecell/np-zinb.py :noweb tangle
-     <<zinb-imports>>
-     import gzip
-     import os
-     import multiprocessing as mp
-     import sqlite3
-
-     <<np-zinb-impl>>
-
+   #+NAME: process-chunk-impl
+   #+BEGIN_SRC ipython :eval never
      def fit_gene(chunk):
        res0 = so.minimize(nb, x0=[0, 0], args=(chunk[:,0], chunk[:,1]))
        pi0 = (chunk[:,0] == 0).sum() / chunk.shape[0] + 1e-8
        res = so.minimize(zinb, x0=list(res0.x) + [sp.logit(pi0 + 1e-8)], args=(chunk[:,0], chunk[:,1]))
        return list(res0.x) + [res0.fun, res0.success] + list(res.x) + [res.fun, res.success]
 
-     with mp.Pool() as pool:
-       chunk = pd.read_table('/scratch/midway2/aksarkar/singlecell/chunk-{}.txt.gz'.format(os.getenv('SLURM_ARRAY_TASK_ID')))
-       # Each subproblem has fixed size
+     def compute_breaks(chunk, by_ind=False):
+       # Each subproblem has fixed size, so we can just split on integer indices
+       # (instead of grouping)
        num_genes = len(set(chunk['gene']))
        num_samples = len(set(chunk['sample']))
-       num_samples_per_ind = chunk.iloc[:num_samples]['chip_id'].value_counts().sort_index().values
-       # Therefore we can just split on integer indices (instead of grouping)
-       breaks = num_samples * np.arange(num_genes).reshape(-1, 1) + np.cumsum(num_samples_per_ind).reshape(1, -1)
-       breaks = breaks.ravel()
+       breaks = num_samples * np.arange(num_genes).reshape(-1, 1)
+       if by_ind:
+         num_samples_per_ind = chunk.iloc[:num_samples]['chip_id'].value_counts().sort_index().values
+         breaks += np.cumsum(num_samples_per_ind).reshape(1, -1)
+       else:
+         # We need to get the right end point of each subproblem (exclusive)
+         breaks += num_samples
+       return breaks.ravel()
+   #+END_SRC
+
+   #+BEGIN_SRC ipython :tangle /scratch/midway2/aksarkar/singlecell/np-zinb.py :noweb tangle
+     <<zinb-imports>>
+     import argparse
+     import gzip
+     import os
+     import multiprocessing as mp
+     import sqlite3
+     <<np-zinb-impl>>
+     <<process-chunk-impl>>
+
+     parser = argparse.ArgumentParser()
+     parser.add_argument('-g', '--by-gene', action='store_true', help='Estimate one model per gene', default=False)
+     args = parser.parse_args()
+
+     with mp.Pool() as pool:
+       chunk = pd.read_table('/scratch/midway2/aksarkar/singlecell/chunk-{}.txt.gz'.format(os.getenv('SLURM_ARRAY_TASK_ID')))
+       breaks = compute_breaks(chunk, not args.by_gene)
        res = pool.map(fit_gene, np.split(chunk[['value', 'size']].values, breaks[:-1]))
 
      with gzip.open('/scratch/midway2/aksarkar/singlecell/result-{}.txt.gz'.format(os.getenv('SLURM_ARRAY_TASK_ID')), 'wt') as f:
@@ -759,11 +775,11 @@
      sbatch --partition=broadwl --job-name="np-zinb" --mem=4G -a 0-20 -n1 -c28 --exclusive
      #!/bin/bash
      source activate scqtl
-     python /scratch/midway2/aksarkar/singlecell/np-zinb.py
+     python /scratch/midway2/aksarkar/singlecell/np-zinb.py -g
    #+END_SRC
 
    #+RESULTS:
-   : Submitted batch job 44066861
+   : Submitted batch job 44100884
 
    Populate the database.
 
@@ -780,4 +796,70 @@
    #+RESULTS:
    :RESULTS:
    :END:
+* Noisy gene identification
 
+  #+BEGIN_SRC ipython
+    params = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/params-by-gene.txt.gz', sep=' ', header=None, index_col=0)
+    params.columns = ['_', 'nb_log_mean', 'nb_log_disp', 'nb_nll', 'nb_success',
+                      'zinb2_log_mean', 'zinb2_log_disp', 'zinb2_logodds', 'zinb_nll',
+                      'zinb_success']
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[4]:
+  :END:
+
+  #+BEGIN_SRC ipython
+    mle = pd.DataFrame({'log_mean': np.where(params['nb_nll'] < params['zinb_nll'], params['nb_log_mean'], params['zinb2_log_mean']),
+                        'log_disp': np.where(params['nb_nll'] < params['zinb_nll'], params['nb_log_disp'], params['zinb2_log_disp'])},
+                       index=params.index)
+    mle['mean'] = np.exp(mle['log_mean'])
+    mle['var'] = np.exp(mle['log_mean']) + np.exp(2 * mle['log_mean'] + mle['log_disp'])
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[34]:
+  :END:
+
+  #+BEGIN_SRC ipython :ipyfile figure/zinb.org/disp-dist.png
+    plt.clf()
+    plt.hist(mle['log_disp'], bins=100)
+    plt.xlabel('Estimated log dispersion')
+    plt.ylabel('Number of genes')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[44]:
+  : Text(0,0.5,'Number of genes')
+  [[file:figure/zinb.org/disp-dist.png]]
+  :END:
+
+  #+BEGIN_SRC ipython :ipyfile figure/zinb.org/var-dist.png
+    plt.clf()
+    plt.hist(mle['var'], bins=100)
+    plt.xlabel('Estimated variance')
+    plt.ylabel('Number of genes')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[45]:
+  : Text(0,0.5,'Number of genes')
+  [[file:figure/zinb.org/var-dist.png]]
+  :END:
+
+  #+BEGIN_SRC ipython :ipyfile figure/zinb.org/noisy-genes.png
+    plt.clf()
+    plt.scatter(x=mle['log_mean'], y=mle['var'] - mle['mean'], s=2, c='k')
+    plt.xlabel('Estimated log mean expression')
+    _ = plt.ylabel('variance - mean')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[42]:
+  [[file:figure/zinb.org/noisy-genes.png]]
+  :END:
