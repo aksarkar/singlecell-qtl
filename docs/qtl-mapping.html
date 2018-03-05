@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2018-03-04 Sun 20:34 -->
+<!-- 2018-03-05 Mon 14:04 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>QTL mapping pipeline</title>
@@ -254,9 +254,9 @@ for the JavaScript code in this tag.
 <div id="content">
 <h1 class="title">QTL mapping pipeline</h1>
 
-<div id="outline-container-org3b22b3c" class="outline-2">
-<h2 id="org3b22b3c">Introduction</h2>
-<div class="outline-text-2" id="text-org3b22b3c">
+<div id="outline-container-orga163d45" class="outline-2">
+<h2 id="orga163d45">Introduction</h2>
+<div class="outline-text-2" id="text-orga163d45">
 <p>
 We previously <a href="zinb.html">estimated means and dispersions per individual, per gene</a>. In
 our modular approach, we now fit log linear models for each:
@@ -281,16 +281,17 @@ Here, we present the following analyses:
 </p>
 
 <ol class="org-ol">
-<li><a href="#org73245c3">We replicate bulk eQTLs</a> in the scRNA-Seq data</li>
-<li><a href="#orgaa637e2">We call mean QTLs</a> in the scRNA-Seq data and replicate in bulk</li>
-<li><a href="#org1a07b2c">We call robustness QTLs</a> in the scRNA-Seq data</li>
+<li><a href="#org592eadf">We replicate bulk eQTLs</a> in the scRNA-Seq data</li>
+<li><a href="#org7540462">We show that approximating a permutation test</a> is not appropriate</li>
+<li><a href="#orgaa637e2">We call mean QTLs</a> in the scRNA-Seq data</li>
+<li><a href="#orgf02711e">We call robustness QTLs</a> in the scRNA-Seq data</li>
 </ol>
 </div>
 </div>
 
-<div id="outline-container-orgaab01b6" class="outline-2">
-<h2 id="orgaab01b6">Genotype processing</h2>
-<div class="outline-text-2" id="text-orgaab01b6">
+<div id="outline-container-org9d05232" class="outline-2">
+<h2 id="org9d05232">Genotype processing</h2>
+<div class="outline-text-2" id="text-org9d05232">
 <p>
 <code>QTLtools</code> reported 0 variants in cis for an unexpected number of genes when
 using the provided genotype file, so reprocess the genotypes to fix it.
@@ -305,12 +306,22 @@ zcat /project/compbio/jointLCLs/genotype/hg19/YRI/vcf/chr{?,??}.hg19.vcf.gz | aw
 tabix genotypes.vcf.gz
 </pre>
 </div>
+
+<div class="org-src-container">
+<pre class="src src-sh">sbatch --partition=broadwl
+<span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/bash</span>
+<span class="org-builtin">source</span> activate scqtl
+plink --memory 2000 --vcf genotypes.vcf.gz --geno 0.01 --maf 0.01 --recode vcf-iid --out genotypes-qc
+bgzip genotypes-qc.vcf
+tabix -f -p vcf genotypes-qc.vcf.gz
+</pre>
+</div>
 </div>
 </div>
 
-<div id="outline-container-org73245c3" class="outline-2">
-<h2 id="org73245c3">Replicate bulk eQTLs in the single cell data</h2>
-<div class="outline-text-2" id="text-org73245c3">
+<div id="outline-container-org592eadf" class="outline-2">
+<h2 id="org592eadf">Replicate bulk eQTLs in the single cell data</h2>
+<div class="outline-text-2" id="text-org592eadf">
 <p>
 Read the bulk eQTLs (nominally significant).
 </p>
@@ -384,15 +395,15 @@ Define replication as significant at FDR 5% in both bulk and single cell.
 </div>
 </div>
 
-<div id="outline-container-orga0df169" class="outline-3">
-<h3 id="orga0df169">NB model</h3>
-<div class="outline-text-3" id="text-orga0df169">
+<div id="outline-container-org1b9c87d" class="outline-3">
+<h3 id="org1b9c87d">NB model</h3>
+<div class="outline-text-3" id="text-org1b9c87d">
 <p>
 Estimate a lower bound on the replication rate using the following procedure:
 </p>
 
 <ol class="org-ol">
-<li>For each individual, for each gene, <a href="zinb.html#org3ee4151">estimate a mean and dispersion in the
+<li>For each individual, for each gene, <a href="zinb.html#orga46d8c0">estimate a mean and dispersion in the
 single cell data ignoring zero inflation</a> (i.e., just fit a negative
 binomial model)</li>
 <li>For each bulk RNA-Seq eQTL-gene pair, test the SNP against the estimated
@@ -416,7 +427,7 @@ Perform the eQTL tests.
 </p>
 
 <div class="org-src-container">
-<pre class="src src-ipython" id="org72705b1"><span class="org-variable-name">X</span>, <span class="org-variable-name">Y</span> = extract_qtl_gene_pair(perm_bulk_qtls, mean)
+<pre class="src src-ipython" id="org5c67bff"><span class="org-variable-name">X</span>, <span class="org-variable-name">Y</span> = extract_qtl_gene_pair(perm_bulk_qtls, mean)
 <span class="org-variable-name">result</span> = []
 <span class="org-variable-name">_sf</span> = st.chi2(1).sf
 <span class="org-keyword">for</span> (_, x), (name, y) <span class="org-keyword">in</span> <span class="org-builtin">zip</span>(X.iterrows(), Y.iterrows()):
@@ -445,7 +456,7 @@ Estimate the replication rate.
 </p>
 
 <div class="org-src-container">
-<pre class="src src-ipython" id="org3057f9d"><span class="org-variable-name">bulk_fdr_pass</span> = bh(merged, <span class="org-string">'p_bulk'</span>)
+<pre class="src src-ipython" id="org848d3e7"><span class="org-variable-name">bulk_fdr_pass</span> = bh(merged, <span class="org-string">'p_bulk'</span>)
 <span class="org-variable-name">sc_fdr_pass</span> = bh(merged, <span class="org-string">'p_sc'</span>)
 <span class="org-variable-name">replicated</span> = merged[np.logical_and(*bulk_fdr_pass.align(sc_fdr_pass))]
 replicated.shape[0], replicated.shape[0] / merged.shape[0]
@@ -457,17 +468,12 @@ replicated.shape[0], replicated.shape[0] / merged.shape[0]
 
 </pre>
 
-<pre class="example">
-(902, 0.9636752136752137)
-
-</pre>
-
 <p>
 Estimate the concordance.
 </p>
 
 <div class="org-src-container">
-<pre class="src src-ipython" id="org6a223f0"><span class="org-variable-name">sign_pass</span> = (replicated[<span class="org-string">'beta_bulk'</span>] * replicated[<span class="org-string">'beta_sc'</span>]).values &gt; 0
+<pre class="src src-ipython" id="org8bb546b"><span class="org-variable-name">sign_pass</span> = (replicated[<span class="org-string">'beta_bulk'</span>] * replicated[<span class="org-string">'beta_sc'</span>]).values &gt; 0
 replicated[sign_pass].shape[0], sign_pass.<span class="org-builtin">sum</span>() / replicated.shape[0]
 </pre>
 </div>
@@ -477,17 +483,12 @@ replicated[sign_pass].shape[0], sign_pass.<span class="org-builtin">sum</span>()
 
 </pre>
 
-<pre class="example">
-(785, 0.8702882483370288)
-
-</pre>
-
 <p>
 Write out tables for the interactive browser.
 </p>
 
 <div class="org-src-container">
-<pre class="src src-ipython" id="orga7471b9"><span class="org-keyword">with</span> sqlite3.connect(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/browser.db'</span>) <span class="org-keyword">as</span> conn:
+<pre class="src src-ipython" id="org1d58682"><span class="org-keyword">with</span> sqlite3.connect(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/browser.db'</span>) <span class="org-keyword">as</span> conn:
   merged.to_sql(<span class="org-string">'qtls'</span>, con=conn, if_exists=<span class="org-string">'replace'</span>)
   (X
    .reset_index()
@@ -501,9 +502,9 @@ Write out tables for the interactive browser.
 </div>
 </div>
 
-<div id="outline-container-orgb7c3e0e" class="outline-3">
-<h3 id="orgb7c3e0e">ZINB model</h3>
-<div class="outline-text-3" id="text-orgb7c3e0e">
+<div id="outline-container-orga1d54a9" class="outline-3">
+<h3 id="orga1d54a9">ZINB model</h3>
+<div class="outline-text-3" id="text-orga1d54a9">
 <p>
 For each individual, for each gene, take either the negative binomial or
 zero-inflated negative binomial estimate, depending on which minimized the
@@ -548,6 +549,145 @@ Write out tables for the interactive browser.
 </div>
 </div>
 
+<div id="outline-container-org7540462" class="outline-2">
+<h2 id="org7540462">Test validity of approximate permutation test</h2>
+<div class="outline-text-2" id="text-org7540462">
+<p>
+<code>qtltools</code> tries to calibrate false discovery rates using the following
+procedure:
+</p>
+
+<ol class="org-ol">
+<li>For each hypothesis, permute the genotype data to estimate the null
+distribution of the p-values</li>
+<li>Fit a beta distribution to the permuted p-values via ML</li>
+<li>Compute the lower tail probability of the observed p-value, assuming it
+was generated from the fitted beta distribution</li>
+<li>Apply the Benjamini-Hochberg procedure on the set of lower tail
+probabilities (across all hypotheses)</li>
+</ol>
+
+<p>
+Test whether the beta approximation is appropriate for our sample size by
+subsetting GEUVADIS. Take all genes on chromosome 1.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">geuvadis</span> = []
+<span class="org-keyword">for</span> chunk <span class="org-keyword">in</span> pd.read_table(<span class="org-string">'/project/compbio/geuvadis/analysis_results/GD462.GeneQuantRPKM.50FN.samplename.resk10.txt.gz'</span>, chunksize=100):
+  geuvadis.append(chunk.query(<span class="org-string">'Chr == "1"'</span>))
+<span class="org-variable-name">geuvadis</span> = pd.concat(geuvadis)
+</pre>
+</div>
+
+<p>
+Pick 54 random individuals from GEUVADIS.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython">np.random.seed(0)
+<span class="org-variable-name">subset</span> = np.random.choice(geuvadis.columns[5:], size=54)
+</pre>
+</div>
+
+<p>
+Write out the phenotype file for <code>qtltools</code>. Important: GEUVADIS VCFs code
+chromosome without <code>chr</code>.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython">write_pheno_file(geuvadis.set_index(geuvadis[<span class="org-string">'Gene_Symbol'</span>].<span class="org-builtin">apply</span>(<span class="org-keyword">lambda</span> x: x.split(<span class="org-string">'.'</span>)[0]))[subset], gene_info, <span class="org-string">'/scratch/midway2/aksarkar/singlecell/test.bed'</span>)
+</pre>
+</div>
+
+<p>
+Index the phenotype file. Important: <code>#</code> sorts before <code>c</code>, but after <code>1</code>.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh" id="org9ba22bd"><span class="org-builtin">export</span> <span class="org-variable-name">input</span>=$<span class="org-variable-name">input</span>
+sbatch --partition=$<span class="org-variable-name">partition</span> --wait
+<span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/bash</span>
+sort -k1,1g -k2,2n -k3,3n $<span class="org-variable-name">input</span> | bgzip &gt;$<span class="org-variable-name">input</span>.gz
+tabix -p bed $<span class="org-variable-name">input</span>.gz
+</pre>
+</div>
+
+<p>
+<code>qtltools</code> segfaults on the VCF file, so convert to <code>plink</code> format.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">sbatch --partition=broadwl --mem=2G
+<span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/bash</span>
+plink --memory 2000 --geno 0.01 --maf 0.01 --vcf /project/compbio/geuvadis/genotypes/GEUVADIS.chr1.PH1PH2_465.IMPFRQFILT_BIALLELIC_PH.annotv2.genotypes.vcf.gz --recode vcf-iid --out geuvadis-chr1
+bgzip geuvadis-chr1.vcf
+tabix -f -p vcf geuvadis-chr1.vcf.gz
+</pre>
+</div>
+
+<p>
+Run <code>qtltools</code>.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh" id="org61bc797"><span class="org-builtin">export</span> <span class="org-variable-name">pheno</span>=$<span class="org-variable-name">pheno</span>
+<span class="org-builtin">export</span> <span class="org-variable-name">geno</span>=$<span class="org-variable-name">geno</span>
+<span class="org-builtin">export</span> <span class="org-variable-name">op</span>=$<span class="org-variable-name">op</span>
+sbatch --partition=$<span class="org-variable-name">partition</span> -n1 -c28 --exclusive -J $<span class="org-variable-name">pheno</span>-qtl -o $<span class="org-variable-name">pheno</span>-qtl.log
+<span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/bash</span>
+<span class="org-builtin">source</span> activate scqtl
+module load parallel
+parallel -j28 qtltools cis --vcf $<span class="org-variable-name">geno</span> --bed $<span class="org-variable-name">pheno</span>.bed.gz $<span class="org-variable-name">op</span> --chunk {#} 100 --out $<span class="org-variable-name">pheno</span>-qtl.{#}.txt ::: $(<span class="org-sh-quoted-exec">seq</span> 1 100)
+</pre>
+</div>
+
+<p>
+Read the results.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-keyword">def</span> <span class="org-function-name">read_qtltools_output</span>(pheno):
+  <span class="org-variable-name">file_names</span> = [<span class="org-string">'{}-qtl.{}.txt'</span>.<span class="org-builtin">format</span>(pheno, i) <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-builtin">range</span>(1, 101)]
+  <span class="org-keyword">return</span> (pd.concat([pd.read_table(f, header=<span class="org-constant">None</span>, sep=<span class="org-string">' '</span>)
+                     <span class="org-keyword">for</span> f <span class="org-keyword">in</span> file_names <span class="org-keyword">if</span> os.path.exists(f) <span class="org-keyword">and</span>
+                     os.path.getsize(f) &gt; 0])
+          .rename(columns={i: x <span class="org-keyword">for</span> i, x <span class="org-keyword">in</span> <span class="org-builtin">enumerate</span>(
+            [<span class="org-string">'gene'</span>, <span class="org-string">'chr'</span>, <span class="org-string">'start'</span>, <span class="org-string">'end'</span>, <span class="org-string">'strand'</span>, <span class="org-string">'num_vars'</span>,
+             <span class="org-string">'distance'</span>, <span class="org-string">'id'</span>, <span class="org-string">'var_chr'</span>, <span class="org-string">'var_start'</span>, <span class="org-string">'var_end'</span>, <span class="org-string">'df'</span>,
+             <span class="org-string">'dummy'</span>, <span class="org-string">'a'</span>, <span class="org-string">'b'</span>, <span class="org-string">'p_nominal'</span>, <span class="org-string">'beta'</span>, <span class="org-string">'p_empirical'</span>, <span class="org-string">'p_beta'</span>]
+          )})
+          .sort_values(<span class="org-string">'p_beta'</span>))
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-ipython"><span class="org-variable-name">geuvadis_qtls</span> = read_qtltools_output(<span class="org-string">'test'</span>)
+</pre>
+</div>
+
+<p>
+Check the beta approximation to the permutation p-values.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython">plt.clf()
+plt.gcf().set_size_inches(6, 6)
+plt.scatter(geuvadis_qtls[<span class="org-string">'p_empirical'</span>], geuvadis_qtls[<span class="org-string">'p_beta'</span>], s=1, c=<span class="org-string">'k'</span>)
+plt.plot([0, 1], [0, 1], c=<span class="org-string">'r'</span>, ls=<span class="org-string">'--'</span>)
+plt.xlabel(<span class="org-string">'Empirical p-value'</span>)
+<span class="org-variable-name">_</span> = plt.ylabel(<span class="org-string">'Approximate p-value'</span>)
+</pre>
+</div>
+
+
+<div class="figure">
+<p><img src="figure/qtl-mapping.org/geuvadis-qtl-beta.png" alt="geuvadis-qtl-beta.png">
+</p>
+</div>
+</div>
+</div>
+
 <div id="outline-container-orgaa637e2" class="outline-2">
 <h2 id="orgaa637e2">Call mean-QTLs in the single cell data</h2>
 <div class="outline-text-2" id="text-orgaa637e2">
@@ -580,26 +720,25 @@ Write out the <a href="https://qtltools.github.io/qtltools/pages/input_files.htm
 
 <div class="org-src-container">
 <pre class="src src-ipython" id="org38e255d"><span class="org-keyword">def</span> <span class="org-function-name">qtltools_format</span>(row):
-  <span class="org-variable-name">row</span>[<span class="org-string">'#Chr'</span>] = <span class="org-string">'chr{}'</span>.<span class="org-builtin">format</span>(row[<span class="org-string">'chr'</span>][2:])
+  <span class="org-variable-name">row</span>[<span class="org-string">'#Chr'</span>] = <span class="org-string">'{}'</span>.<span class="org-builtin">format</span>(row[<span class="org-string">'chr'</span>][2:])
   <span class="org-variable-name">row</span>[<span class="org-string">'gid'</span>] = row.name
   <span class="org-variable-name">row</span>[<span class="org-string">'pid'</span>] = row.name
   <span class="org-keyword">return</span> row
 
-<span class="org-keyword">def</span> <span class="org-function-name">write_pheno_file</span>(pheno, gene_info, output_file, holdout=<span class="org-constant">True</span>):
+<span class="org-keyword">def</span> <span class="org-function-name">write_pheno_file</span>(pheno, gene_info, output_file, holdout=<span class="org-constant">True</span>, **kwargs):
   <span class="org-keyword">if</span> holdout:
     <span class="org-variable-name">genes</span> = gene_info.loc[gene_info[<span class="org-string">'chr'</span>].<span class="org-builtin">apply</span>(<span class="org-keyword">lambda</span> x: <span class="org-builtin">bool</span>(<span class="org-builtin">int</span>(x[2:]) % 2)).values]
   <span class="org-keyword">else</span>:
     <span class="org-variable-name">genes</span> = gene_info
   (genes
-   .<span class="org-builtin">apply</span>(qtltools_format, axis=1)
+   .<span class="org-builtin">apply</span>(qtltools_format, **kwargs, axis=1)
    .merge(pheno, left_index=<span class="org-constant">True</span>, right_index=<span class="org-constant">True</span>)
    .to_csv(output_file,
            sep=<span class="org-string">'\t'</span>,
            columns=[<span class="org-string">'#Chr'</span>, <span class="org-string">'start'</span>, <span class="org-string">'end'</span>, <span class="org-string">'pid'</span>, <span class="org-string">'gid'</span>, <span class="org-string">'strand'</span>] + <span class="org-builtin">list</span>(pheno.columns),
            header=<span class="org-constant">True</span>,
            index=<span class="org-constant">False</span>,
-           index_label=<span class="org-constant">False</span>)
-  )
+           index_label=<span class="org-constant">False</span>))
 </pre>
 </div>
 
@@ -612,128 +751,21 @@ Write out the <a href="https://qtltools.github.io/qtltools/pages/input_files.htm
 Index the phenotype file.
 </p>
 
-<div class="org-src-container">
-<pre class="src src-sh" id="org9ba22bd"><span class="org-builtin">export</span> <span class="org-variable-name">input</span>=$<span class="org-variable-name">input</span>
-sbatch --partition=$<span class="org-variable-name">partition</span> --wait
-<span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/bash</span>
-sort -k1,1 -k2,2n -k3,3n $<span class="org-variable-name">input</span> | bgzip &gt;$<span class="org-variable-name">input</span>.gz
-tabix -p bed $<span class="org-variable-name">input</span>.gz
+<pre class="example">
+Submitted batch job 44113019
+
 </pre>
-</div>
-
-<p>
-Run the QTL mapping, using the approximate permutation test implemented in
-<code>QTLtools</code>.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-sh" id="org61bc797"><span class="org-builtin">export</span> <span class="org-variable-name">pheno</span>=$<span class="org-variable-name">pheno</span>
-sbatch --partition=$<span class="org-variable-name">partition</span> -n1 -c28 --exclusive -J $<span class="org-variable-name">pheno</span>-qtl -o $<span class="org-variable-name">pheno</span>-qtl.log
-<span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/bash</span>
-<span class="org-builtin">source</span> activate scqtl
-module load parallel
-parallel -j28 qtltools cis --vcf /project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz --bed $<span class="org-variable-name">pheno</span>.bed.gz --permute 1000 --chunk {#} 100 --out $<span class="org-variable-name">pheno</span>-qtl.{#}.txt ::: $(<span class="org-sh-quoted-exec">seq</span> 1 100)
-</pre>
-</div>
-
-<p>
-Read the results.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span class="org-keyword">def</span> <span class="org-function-name">read_qtltools_output</span>(pheno):
-  <span class="org-variable-name">file_names</span> = [<span class="org-string">'{}-qtl.{}.txt'</span>.<span class="org-builtin">format</span>(pheno, i) <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-builtin">range</span>(1, 101)]
-  <span class="org-keyword">return</span> (pd.concat([pd.read_table(f, header=<span class="org-constant">None</span>, sep=<span class="org-string">' '</span>)
-                     <span class="org-keyword">for</span> f <span class="org-keyword">in</span> file_names <span class="org-keyword">if</span> os.path.exists(f) <span class="org-keyword">and</span>
-                     os.path.getsize(f) &gt; 0])
-          .rename(columns={i: x <span class="org-keyword">for</span> i, x <span class="org-keyword">in</span> <span class="org-builtin">enumerate</span>(
-            [<span class="org-string">'gene'</span>, <span class="org-string">'chr'</span>, <span class="org-string">'start'</span>, <span class="org-string">'end'</span>, <span class="org-string">'strand'</span>, <span class="org-string">'num_vars'</span>,
-             <span class="org-string">'distance'</span>, <span class="org-string">'id'</span>, <span class="org-string">'var_chr'</span>, <span class="org-string">'var_start'</span>, <span class="org-string">'var_end'</span>, <span class="org-string">'df'</span>,
-             <span class="org-string">'dummy'</span>, <span class="org-string">'a'</span>, <span class="org-string">'b'</span>, <span class="org-string">'p_nominal'</span>, <span class="org-string">'beta'</span>, <span class="org-string">'p_empirical'</span>, <span class="org-string">'p_beta'</span>]
-          )})
-          .sort_values(<span class="org-string">'p_beta'</span>))
-</pre>
-</div>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span class="org-variable-name">mean_qtls</span> = read_qtltools_output(<span class="org-string">'mean'</span>)
-</pre>
-</div>
-
-<p>
-Apply the Benjamini-Hochberg procedure:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span class="org-variable-name">keep_mean_qtls</span> = bh(mean_qtls, <span class="org-string">'p_beta'</span>)
-</pre>
-</div>
-
-<p>
-Check the beta approximation to the permutation p-values:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython">plt.clf()
-plt.scatter(mean_qtls[<span class="org-string">'p_empirical'</span>], mean_qtls[<span class="org-string">'p_beta'</span>], s=1, c=<span class="org-string">'k'</span>)
-plt.plot([0, 1], [0, 1], c=<span class="org-string">'r'</span>, ls=<span class="org-string">'--'</span>)
-plt.xlabel(<span class="org-string">'Empirical p-value'</span>)
-plt.ylabel(<span class="org-string">'Approximate p-value'</span>)
-</pre>
-</div>
 
 <pre class="example">
-Text(0,0.5,'Approximate p-value')
+Submitted batch job 44113021
 
 </pre>
-
-<div class="figure">
-<p><img src="figure/qtl-mapping.org/zi2-mean-qtl-beta.png" alt="zi2-mean-qtl-beta.png">
-</p>
-</div>
-
-<p>
-Plot the quantile-quantile plot of QTL test statistics:
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython"><span class="org-keyword">def</span> <span class="org-function-name">qqplot</span>(x):
-  <span class="org-variable-name">y</span> = -np.log10(x[np.logical_and(np.isfinite(x), x &gt; 0)])
-  <span class="org-variable-name">y</span> = y[np.isfinite(y)]
-  <span class="org-variable-name">n</span> = y.shape[0]
-  plt.clf()
-  plt.scatter(np.flip(-np.log10(np.linspace(0, 1, n + 1)[1:]), -1), np.sort(y), s=1, c=<span class="org-string">'k'</span>)
-  plt.plot([0, np.log10(n)], [0, np.log10(n)], color=<span class="org-string">'r'</span>, ls=<span class="org-string">'dashed'</span>)
-  plt.xlabel(<span class="org-string">'Expected -$\log_{10}(p)$'</span>)
-  plt.ylabel(<span class="org-string">'Observed -$\log_{10}(p)$'</span>)
-</pre>
-</div>
-
-<div class="org-src-container">
-<pre class="src src-ipython">qqplot(mean_qtls[<span class="org-string">'p_beta'</span>])
-</pre>
-</div>
-
-
-<div class="figure">
-<p><img src="figure/qtl-mapping.org/zi2-mean-qtl-qq.png" alt="zi2-mean-qtl-qq.png">
-</p>
-</div>
-
-<p>
-Write out a table for the interactive browser.
-</p>
-
-<div class="org-src-container">
-<pre class="src src-ipython">
-</pre>
-</div>
 </div>
 </div>
 
-<div id="outline-container-org1a07b2c" class="outline-2">
-<h2 id="org1a07b2c">Dispersion-QTL calling</h2>
-<div class="outline-text-2" id="text-org1a07b2c">
+<div id="outline-container-orgf02711e" class="outline-2">
+<h2 id="orgf02711e">Dispersion-QTL calling</h2>
+<div class="outline-text-2" id="text-orgf02711e">
 <p>
 Read the estimated parameters and center them.
 </p>
@@ -1628,7 +1660,7 @@ Plot the quantile-quantile plot of QTL test statistics:
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2018-03-04 Sun 20:34</p>
+<p class="date">Created: 2018-03-05 Mon 14:04</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>

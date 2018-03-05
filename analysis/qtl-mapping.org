@@ -17,9 +17,9 @@
   Here, we present the following analyses:
 
   1. [[*Replicate bulk eQTLs in the single cell data][We replicate bulk eQTLs]] in the scRNA-Seq data
-  2. [[*Call mean-QTLs in the single cell data][We call mean QTLs]] in the scRNA-Seq data and show that approximate
-     permutation test is not appropriate
-  3. [[*Dispersion-QTL calling][We call robustness QTLs]] in the scRNA-Seq data
+  2. [[*Test validity of approximate permutation test][We show that approximating a permutation test]] is not appropriate
+  3. [[*Call mean-QTLs in the single cell data][We call mean QTLs]] in the scRNA-Seq data
+  4. [[*Dispersion-QTL calling][We call robustness QTLs]] in the scRNA-Seq data
 
 * Setup                                                            :noexport:
 
@@ -68,6 +68,15 @@
 
   #+RESULTS:
   : Submitted batch job 42223832
+
+  #+BEGIN_SRC sh :dir /project2/gilad/singlecell-qtl/bulk
+    sbatch --partition=broadwl
+    #!/bin/bash
+    source activate scqtl
+    plink --memory 2000 --vcf genotypes.vcf.gz --geno 0.01 --maf 0.01 --recode vcf-iid --out genotypes-qc
+    bgzip genotypes-qc.vcf
+    tabix -f -p vcf genotypes-qc.vcf.gz
+  #+END_SRC
 
 * Replicate bulk eQTLs in the single cell data
 
@@ -219,12 +228,6 @@
    : (892, 0.9529914529914529)
    :END:
 
-   #+RESULTS:
-   :RESULTS:
-   # Out[57]:
-   : (902, 0.9636752136752137)
-   :END:
-
    Estimate the concordance.
 
    #+NAME: effect-concordance
@@ -237,12 +240,6 @@
    :RESULTS:
    # Out[30]:
    : (779, 0.8733183856502242)
-   :END:
-
-   #+RESULTS:
-   :RESULTS:
-   # Out[58]:
-   : (785, 0.8702882483370288)
    :END:
 
    Write out tables for the interactive browser.
@@ -318,118 +315,111 @@
    :RESULTS:
    :END:
 
-* Call mean-QTLs in the single cell data
+* Test validity of approximate permutation test
 
-  For each individual, for each gene, take either the negative binomial or
-  zero-inflated negative binomial estimate, depending on which minimized the
-  negative log-likelihood of the data.
+  ~qtltools~ tries to calibrate false discovery rates using the following
+  procedure:
+
+  1. For each hypothesis, permute the genotype data to estimate the null
+     distribution of the p-values
+  2. Fit a beta distribution to the permuted p-values via ML
+  3. Compute the lower tail probability of the observed p-value, assuming it
+     was generated from the fitted beta distribution
+  4. Apply the Benjamini-Hochberg procedure on the set of lower tail
+     probabilities (across all hypotheses)
+
+  Test whether the beta approximation is appropriate for our sample size by
+  subsetting GEUVADIS. Take all genes on chromosome 1.
 
   #+BEGIN_SRC ipython
-    with sqlite3.connect('/scratch/midway2/aksarkar/singlecell/browser.db') as conn:
-      mean = (pd.read_sql('select gene, ind, case when nb_nll < zinb_nll then nb_log_mean else zinb2_log_mean end as log_mean from params;', conn)
-              .pivot(index='gene', columns='ind', values='log_mean'))
+    geuvadis = []
+    for chunk in pd.read_table('/project/compbio/geuvadis/analysis_results/GD462.GeneQuantRPKM.50FN.samplename.resk10.txt.gz', chunksize=100):
+      geuvadis.append(chunk.query('Chr == "1"'))
+    geuvadis = pd.concat(geuvadis)
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[32]:
+  # Out[34]:
   :END:
 
-  Write out the [[https://qtltools.github.io/qtltools/pages/input_files.html][phenotype file]] for ~qtltools~.
-
-  #+NAME: get-gene-info
-  #+BEGIN_SRC ipython
-    gene_info = (pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/scqtl-genes.txt.gz')
-                 .set_index('gene')
-                 .query('source == "H. sapiens"')
-                 .query('chr != "hsX"')
-                 .query('chr != "hsY"')
-                 .query('chr != "hsMT"'))
-  #+END_SRC
-
-  #+RESULTS: get-gene-info
-  :RESULTS:
-  # Out[25]:
-  :END:
-
-  #+NAME: write-pheno-def
-  #+BEGIN_SRC ipython
-    def qtltools_format(row):
-      row['#Chr'] = 'chr{}'.format(row['chr'][2:])
-      row['gid'] = row.name
-      row['pid'] = row.name
-      return row
-
-    def write_pheno_file(pheno, gene_info, output_file, holdout=True):
-      if holdout:
-        genes = gene_info.loc[gene_info['chr'].apply(lambda x: bool(int(x[2:]) % 2)).values]
-      else:
-        genes = gene_info
-      (genes
-       .apply(qtltools_format, axis=1)
-       .merge(pheno, left_index=True, right_index=True)
-       .to_csv(output_file,
-               sep='\t',
-               columns=['#Chr', 'start', 'end', 'pid', 'gid', 'strand'] + list(pheno.columns),
-               header=True,
-               index=False,
-               index_label=False)
-      )
-  #+END_SRC
-
-  #+RESULTS: write-pheno-def
-  :RESULTS:
-  # Out[47]:
-  :END:
+  Pick 54 random individuals from GEUVADIS.
 
   #+BEGIN_SRC ipython
-    write_pheno_file(mean, gene_info, '/scratch/midway2/aksarkar/singlecell/mean.bed')
+    np.random.seed(0)
+    subset = np.random.choice(geuvadis.columns[5:], size=54)
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[48]:
+  # Out[38]:
   :END:
 
-  Index the phenotype file.
+  Write out the phenotype file for ~qtltools~. Important: GEUVADIS VCFs code
+  chromosome without ~chr~.
+
+  #+BEGIN_SRC ipython
+    write_pheno_file(geuvadis.set_index(geuvadis['Gene_Symbol'].apply(lambda x: x.split('.')[0]))[subset], gene_info, '/scratch/midway2/aksarkar/singlecell/test.bed')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[55]:
+  :END:
+
+  Index the phenotype file. Important: ~#~ sorts before ~c~, but after ~1~.
 
   #+NAME: tabix
   #+BEGIN_SRC sh :var input="mean.bed" :var partition="broadwl" :dir /scratch/midway2/aksarkar/singlecell :eval never-export
     export input=$input
     sbatch --partition=$partition --wait
     #!/bin/bash
-    sort -k1,1 -k2,2n -k3,3n $input | bgzip >$input.gz
+    sort -k1,1g -k2,2n -k3,3n $input | bgzip >$input.gz
     tabix -p bed $input.gz
   #+END_SRC
 
   #+RESULTS: tabix
-  : Submitted batch job 44090411
+  : Submitted batch job 44110009
 
-  Run the QTL mapping, using the approximate permutation test implemented in
-  ~QTLtools~.
+  ~qtltools~ segfaults on the VCF file, so convert to ~plink~ format.
+
+  #+BEGIN_SRC sh :dir /scratch/midway2/aksarkar/singlecell/
+    sbatch --partition=broadwl --mem=2G
+    #!/bin/bash
+    plink --memory 2000 --geno 0.01 --maf 0.01 --vcf /project/compbio/geuvadis/genotypes/GEUVADIS.chr1.PH1PH2_465.IMPFRQFILT_BIALLELIC_PH.annotv2.genotypes.vcf.gz --recode vcf-iid --out geuvadis-chr1
+    bgzip geuvadis-chr1.vcf
+    tabix -f -p vcf geuvadis-chr1.vcf.gz
+  #+END_SRC
+
+  #+RESULTS:
+  : Submitted batch job 44111976
+
+  Run ~qtltools~.
 
   #+NAME: qtltools
-  #+BEGIN_SRC sh :var pheno="mean" :var partition="broadwl" :dir /scratch/midway2/aksarkar/singlecell :eval never-export 
+  #+BEGIN_SRC sh :var pheno="test" :var geno="geuvadis-chr1.vcf.gz" :var partition="broadwl" :var op="--permute 100000" :dir /scratch/midway2/aksarkar/singlecell :eval never-export 
     export pheno=$pheno
+    export geno=$geno
+    export op=$op
     sbatch --partition=$partition -n1 -c28 --exclusive -J $pheno-qtl -o $pheno-qtl.log
     #!/bin/bash
     source activate scqtl
     module load parallel
-    parallel -j28 qtltools cis --vcf /project2/gilad/singlecell-qtl/bulk/genotypes.vcf.gz --bed $pheno.bed.gz --permute 100000 --chunk {#} 100 --out $pheno-qtl.{#}.txt ::: $(seq 1 100)
+    parallel -j28 qtltools cis --vcf $geno --bed $pheno.bed.gz $op --chunk {#} 100 --out $pheno-qtl.{#}.txt ::: $(seq 1 100)
   #+END_SRC
 
   #+RESULTS: qtltools
-  : Submitted batch job 44093227
+  : Submitted batch job 44112079
 
   #+BEGIN_SRC sh :exports none
-    sacct -j 44093227 -o Elapsed,ExitCode
+    sacct -j 44112079 -o Elapsed,ExitCode
   #+END_SRC
 
   #+RESULTS:
   |    Elapsed | ExitCode |
   | ---------- | -------- |
-  |   06:30:26 |      0:0 |
-  |   06:30:26 |      0:0 |
+  |   00:41:31 |      0:0 |
+  |   00:41:31 |      0:0 |
 
   Read the results.
 
@@ -449,23 +439,24 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[2]:
+  # Out[56]:
   :END:
 
   #+BEGIN_SRC ipython
-    mean_qtls = read_qtltools_output('mean')
+    geuvadis_qtls = read_qtltools_output('test')
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[3]:
+  # Out[61]:
   :END:
 
-  Check the beta approximation to the permutation p-values:
+  Check the beta approximation to the permutation p-values.
 
-  #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/zi2-mean-qtl-beta.png
+  #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/geuvadis-qtl-beta.png
     plt.clf()
-    plt.scatter(mean_qtls['p_empirical'], mean_qtls['p_beta'], s=1, c='k')
+    plt.gcf().set_size_inches(6, 6)
+    plt.scatter(geuvadis_qtls['p_empirical'], geuvadis_qtls['p_beta'], s=1, c='k')
     plt.plot([0, 1], [0, 1], c='r', ls='--')
     plt.xlabel('Empirical p-value')
     _ = plt.ylabel('Approximate p-value')
@@ -473,9 +464,103 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[9]:
-  [[file:figure/qtl-mapping.org/zi2-mean-qtl-beta.png]]
+  # Out[65]:
+  [[file:figure/qtl-mapping.org/geuvadis-qtl-beta.png]]
   :END:
+
+* Call mean-QTLs in the single cell data
+
+  For each individual, for each gene, take either the negative binomial or
+  zero-inflated negative binomial estimate, depending on which minimized the
+  negative log-likelihood of the data.
+
+  #+BEGIN_SRC ipython
+    with sqlite3.connect('/scratch/midway2/aksarkar/singlecell/browser.db') as conn:
+      mean = (pd.read_sql('select gene, ind, case when nb_nll < zinb_nll then nb_log_mean else zinb2_log_mean end as log_mean from params;', conn)
+              .pivot(index='gene', columns='ind', values='log_mean'))
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[69]:
+  :END:
+
+  Write out the [[https://qtltools.github.io/qtltools/pages/input_files.html][phenotype file]] for ~qtltools~.
+
+  #+NAME: get-gene-info
+  #+BEGIN_SRC ipython
+    gene_info = (pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/scqtl-genes.txt.gz')
+                 .set_index('gene')
+                 .query('source == "H. sapiens"')
+                 .query('chr != "hsX"')
+                 .query('chr != "hsY"')
+                 .query('chr != "hsMT"'))
+  #+END_SRC
+
+  #+RESULTS: get-gene-info
+  :RESULTS:
+  # Out[70]:
+  :END:
+
+  #+NAME: write-pheno-def
+  #+BEGIN_SRC ipython
+    def qtltools_format(row):
+      row['#Chr'] = '{}'.format(row['chr'][2:])
+      row['gid'] = row.name
+      row['pid'] = row.name
+      return row
+
+    def write_pheno_file(pheno, gene_info, output_file, holdout=True, **kwargs):
+      if holdout:
+        genes = gene_info.loc[gene_info['chr'].apply(lambda x: bool(int(x[2:]) % 2)).values]
+      else:
+        genes = gene_info
+      (genes
+       .apply(qtltools_format, **kwargs, axis=1)
+       .merge(pheno, left_index=True, right_index=True)
+       .to_csv(output_file,
+               sep='\t',
+               columns=['#Chr', 'start', 'end', 'pid', 'gid', 'strand'] + list(pheno.columns),
+               header=True,
+               index=False,
+               index_label=False))
+  #+END_SRC
+
+  #+RESULTS: write-pheno-def
+  :RESULTS:
+  # Out[67]:
+  :END:
+
+  #+BEGIN_SRC ipython
+    write_pheno_file(mean, gene_info, '/scratch/midway2/aksarkar/singlecell/mean.bed')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[71]:
+  :END:
+
+  Index the phenotype file.
+
+  #+CALL: tabix(input="mean.bed")
+
+  #+RESULTS:
+  : Submitted batch job 44113019
+
+  #+CALL: qtltools(pheno="mean", geno="/project2/gilad/singlecell-qtl/bulk/genotypes-qc.vcf.gz", op="--nominal 1")
+
+  #+RESULTS:
+  : Submitted batch job 44113021
+
+  #+BEGIN_SRC sh :exports none
+    sacct -j 44093227 -o Elapsed,ExitCode
+  #+END_SRC
+
+  #+RESULTS:
+  |    Elapsed | ExitCode |
+  | ---------- | -------- |
+  |   06:30:26 |      0:0 |
+  |   06:30:26 |      0:0 |
 
 * Dispersion-QTL calling
 
