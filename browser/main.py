@@ -51,16 +51,22 @@ def update_umi(attr, old, new):
       counts, _ = np.histogram(umi['value'].values, bins=edges)
       umi_data.data = bokeh.models.ColumnDataSource.from_df(pd.DataFrame({'left': edges[:-1], 'right': edges[1:], 'count': counts}))
 
-      log_mean, log_disp, logodds = [float(x) for x in next(conn.execute('select zinb2_log_mean, zinb2_log_disp, zinb2_logodds from params where gene == ? and ind == ?', (gene, ind)))]
-      n = np.exp(log_disp)
-      p = 1 / (1 + umi['size'] * np.exp(log_mean - log_disp).T)
+      params = pd.read_sql('select nb_log_mean, nb_log_disp, nb_nll, zinb2_log_mean, zinb2_log_disp, zinb2_logodds, zinb_nll from params where gene == ? and ind == ?', con=conn, params=(gene, ind))
+      if params['nb_nll'] < params['zinb_nll']:
+        prefix = 'nb'
+      else:
+        prefix = 'zinb2'
+      n = np.exp(params['{}_log_disp'.format(prefix)])
+      p = 1 / (1 + umi['size'] * np.exp(params['{}_log_mean'.format(prefix)] - params['{}_log_disp'.format(prefix)]).T)
       assert n > 0
       assert (p >= 0).all()
       assert (p <= 1).all()
       G = st.nbinom(n=n, p=p).pmf
       grid = np.arange(19)
-      pmf = sp.expit(-logodds) * np.array([G(x).mean() for x in grid])
-      pmf[0] += sp.expit(logodds)
+      pmf = np.array([G(x).mean() for x in grid])
+      if params['nb_nll'] > params['zinb_nll']:
+        pmf *= sp.expit(-params['{}_logodds'.format(prefix)])
+        pmf[0] += sp.expit(params['{}_logodds'.format(prefix)])
       exp_count = umi.shape[0] * pmf
       dist_data.data = bokeh.models.ColumnDataSource.from_df(pd.DataFrame({'x': .5 + grid, 'y': exp_count}))
     else:
