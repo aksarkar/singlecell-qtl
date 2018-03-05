@@ -3,19 +3,15 @@
 
 * Introduction
 
-  The simplest approach to call mean/variance QTLs is modular:
+  We take a modular approach to call QTLs:
 
   1. Estimate a mean and a dispersion for each individual
   2. Treat the mean/dispersion as continuous phenotypes and perform QTL mapping
 
-  Here, we solve (1), and [[file:qtl-mapping.org][use QTLtools]] to solve (2). We perform the following
-  analyses:
+  Here, we solve (1).
 
-  1. [[*Tensorflow implementation][We implement GPU-based]] maximum likelihood estimation of the parameters
-  2. [[*Quantile-quantile diagnostic plot][We develop visual diagnostics]] of the fitted models to check goodness of fit
-  3. [[*Fit NB][We fit a model without dropout]] and show it does not fit the data
-  4. [[*Fit ZINB][We fit a model assuming dropout per gene]]
-  5. [[*Fit ZINB2][We fit a model assuming dropout per individual per gene]]
+  1. [[*Tensorflow implementation][We implement GPU-based ML estimation]]
+  2. [[*numpy/scipy implementation][We implement CPU-based ML estimation]]
 
 * Model specification
 
@@ -69,7 +65,7 @@
   #+CALL: ipython3(memory="16G",venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 44039685
+  : Submitted batch job 44067094
 
   #+NAME: zinb-imports
   #+BEGIN_SRC ipython
@@ -77,11 +73,12 @@
     import pandas as pd
     import scipy.stats as st
     import scipy.special as sp
+    import sqlite3
   #+END_SRC
 
   #+RESULTS: zinb-imports
   :RESULTS:
-  # Out[5]:
+  # Out[4]:
   :END:
 
   #+BEGIN_SRC ipython
@@ -125,217 +122,11 @@
   #+END_EXAMPLE
   :END:
 
-* Read the data
-
-  Read the QC'ed data.
-
-  #+CALL: read-data-qc()
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[61]:
-  :END:
-
-  Compute size factors.
-
-  #+BEGIN_SRC ipython
-    size = umi.agg(np.sum)
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[4]:
-  :END:
-
-  Onehot-encode the samples.
-
-  #+NAME: onehot-qc
-  #+BEGIN_SRC ipython
-    individuals = sorted(annotations['chip_id'].unique())
-    onehot = np.zeros((umi.shape[1], len(individuals)), dtype=np.float32)
-    onehot[np.arange(onehot.shape[0]),annotations['chip_id'].apply(lambda x: individuals.index(x))] = 1
-    onehot = pd.DataFrame(onehot, columns=individuals, index=umi.columns)
-    onehot.shape
-  #+END_SRC
-
-  #+RESULTS: onehot-qc
-  :RESULTS:
-  # Out[5]:
-  : (4995, 54)
-  :END:
-
-  Check that one-hot encoding is OK:
-
-  #+BEGIN_SRC ipython :async t
-    for _ in range(100):
-      gene = np.random.choice(umi.index)
-      ind = np.random.choice(individuals)
-      idx = individuals.index(ind)
-      assert (umi.loc[gene, (annotations['chip_id'] == ind).values] == 
-              umi.loc[gene, onehot.dot(np.eye(onehot.shape[1])[idx]).astype(bool)]).all()
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[5]:
-  :END:
-
-* numpy/scipy implementation
-
-  Optimize the negative log-likelihood.
-
-  #+NAME: np-zinb-impl
-  #+BEGIN_SRC ipython
-    import scipy.optimize as so
-
-    def log(x):
-      """Numerically safe log"""
-      return np.log(x + 1e-8)
-
-    def sigmoid(x):
-      """Numerically safe sigmoid"""
-      return np.clip(sp.expit(x), -13, 13)
-
-    def zinb(theta, x, size):
-      theta, dropout = theta[:2], sp.expit(theta[2])
-      case_zero = log(dropout + (1 - dropout) * np.exp(-nb(theta, x, size)))
-      case_non_zero = log(1 - dropout) - nb(theta, x, size)
-      return -np.where(x < 1e-8, case_zero, case_non_zero).mean()
-
-    def nb(theta, x, size):
-      mean, inv_disp = np.exp(theta)
-      mean *= size
-      assert mean.shape == x.shape
-      return -(x * log(mean / inv_disp) -
-               x * log(1 + mean / inv_disp) -
-               inv_disp * log(1 + mean / inv_disp) +
-               sp.gammaln(x + inv_disp) -
-               sp.gammaln(inv_disp) -
-               sp.gammaln(x + 1)).mean()
-   #+END_SRC
-
-   #+RESULTS: np-zinb-impl
-   :RESULTS:
-   # Out[1]:
-   :END:
-
-   #+RESULTS:
-   :RESULTS:
-   # Out[4]:
-   :END:
-
-   Use this to check the parameter estimation for a particular gene/individual.
-
-   #+BEGIN_SRC ipython
-     import sqlite3
-
-     def extract_data(ind, gene):
-       with sqlite3.connect('/scratch/midway2/aksarkar/singlecell/browser.db') as conn:
-         umi = pd.read_sql("""select umi.value, annotation.size from umi, annotation 
-         where annotation.chip_id == ? and gene == ? and 
-         umi.sample == annotation.sample;""", con=conn, params=(ind, gene))
-         return umi
-   #+END_SRC
-
-   #+RESULTS:
-   :RESULTS:
-   # Out[7]:
-   :END:
-
-   Shard the data to parallelize over nodes.
-
-   #+BEGIN_SRC ipython :async t
-     import sqlite3
-
-     with sqlite3.connect('/home/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
-       annotation = pd.read_sql('select * from annotation', con=conn).set_index('sample')
-
-     keep_samples = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/quality-single-cells.txt', index_col=0, header=None)
-     keep_genes = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/genes-pass-filter.txt', index_col=0, header=None)
-     keep_genes = keep_genes[keep_genes.values].index
-     i = 0
-     for chunk in pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/scqtl-counts.txt.gz', index_col=0, chunksize=1000):
-       print('Processing chunk {}'.format(i))
-       chunk = (chunk
-                .loc[:,keep_samples.values.ravel()]
-                .filter(items=keep_genes, axis='index'))
-       if not chunk.empty:
-         chunk = (chunk
-                  .reset_index()
-                  .melt(id_vars='gene', var_name='sample')
-                  .merge(annotation, left_on='sample', right_index=True)
-                  .sort_values(['gene', 'chip_id', 'sample']))
-         chunk.to_csv('/scratch/midway2/aksarkar/singlecell/chunk-{}.txt.gz'.format(i), compression='gzip', sep='\t')
-         i += 1
-   #+END_SRC
-
-   #+RESULTS:
-   :RESULTS:
-   :END:
-
-   Process each chunk in parallel.
-
-   #+BEGIN_SRC ipython :eval never :tangle /scratch/midway2/aksarkar/singlecell/np-zinb.py :noweb tangle
-     <<zinb-imports>>
-     import gzip
-     import os
-     import multiprocessing as mp
-     import sqlite3
-
-     <<np-zinb-impl>>
-
-     def fit_gene(chunk):
-       res0 = so.minimize(nb, x0=[0, 0], args=(chunk[:,0], chunk[:,1]))
-       pi0 = (chunk[:,0] == 0).sum() / chunk.shape[0] + 1e-8
-       res = so.minimize(zinb, x0=list(res0.x) + [sp.logit(pi0 + 1e-8)], args=(chunk[:,0], chunk[:,1]))
-       return list(res0.x) + [res0.fun, res0.success] + list(res.x) + [res.fun, res.success]
-
-     with mp.Pool() as pool:
-       chunk = pd.read_table('/scratch/midway2/aksarkar/singlecell/chunk-{}.txt.gz'.format(os.getenv('SLURM_ARRAY_TASK_ID')))
-       # Each subproblem has fixed size
-       num_genes = len(set(chunk['gene']))
-       num_samples = len(set(chunk['sample']))
-       num_samples_per_ind = chunk.iloc[:num_samples]['chip_id'].value_counts().sort_index().values
-       # Therefore we can just split on integer indices (instead of grouping)
-       breaks = num_samples * np.arange(num_genes).reshape(-1, 1) + np.cumsum(num_samples_per_ind).reshape(1, -1)
-       breaks = breaks.ravel()
-       res = pool.map(fit_gene, np.split(chunk[['value', 'size']].values, breaks[:-1]))
-
-     with gzip.open('/scratch/midway2/aksarkar/singlecell/result-{}.txt.gz'.format(os.getenv('SLURM_ARRAY_TASK_ID')), 'wt') as f:
-       for b in breaks:
-         gene, ind = chunk.iloc[b - 1][['gene', 'chip_id']]
-         print(gene, ind, *res.pop(0), file=f)
-   #+END_SRC
-
-   #+BEGIN_SRC sh :dir /scratch/midway2/aksarkar/singlecell
-     sbatch --partition=broadwl --job-name="np-zinb" --mem=4G -a 8 -n1 -c28 --exclusive
-     #!/bin/bash
-     source activate scqtl
-     python /scratch/midway2/aksarkar/singlecell/np-zinb.py
-   #+END_SRC
-
-   #+RESULTS:
-   : Submitted batch job 44039745
-
-   Populate the database.
-
-   #+BEGIN_SRC ipython :async t
-     with sqlite3.connect('/scratch/midway2/aksarkar/singlecell/browser.db') as conn:
-       conn.execute('drop table if exists params;')
-       for i in range(20):
-         for chunk in pd.read_table('/scratch/midway2/aksarkar/singlecell/result-{}.txt.gz'.format(i), sep=' ', chunksize=1000):
-           chunk.columns = ['gene', 'ind', 'nb_log_mean', 'nb_log_disp', 'nb_nll', 'nb_success', 'zinb2_log_mean', 'zinb2_log_disp', 'zinb2_logodds', 'zinb_nll', 'zinb_success']
-           chunk.to_sql(name='params', con=conn, index=False, if_exists='append')
-       conn.execute('create index ix_params on params(gene, ind);')
-   #+END_SRC
-
 * Tensorflow implementation
 
   We optimize all of the parameters together, using one-hot encoding to map
   parameters to data points. This makes inference more amenable to running on
-  the GPU. Although this is slower for the NB estimation problem, it will be
-  faster for the ZINB estimation problem when parameters are shared and we need
-  to operate on the entire count matrix.
+  the GPU.
 
   Use ~tensorflow~ to automatically differentiate the negative log likelihood and
   perform gradient descent.
@@ -453,7 +244,7 @@
   :RESULTS:
   :END:
 
-* Quantile-quantile diagnostic plot
+** Quantile-quantile diagnostic plot
 
   The challenge in visualizing the fitted distributions is that the
   observations \(r_{ijk}\) are not drawn iid. from a distribution
@@ -583,7 +374,51 @@
   # Out[12]:
   :END:
 
-* Fit NB
+** Read the data
+
+  Read the QC'ed data.
+
+  #+CALL: read-data-qc()
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[61]:
+  :END:
+
+  Onehot-encode the samples.
+
+  #+NAME: onehot-qc
+  #+BEGIN_SRC ipython
+    individuals = sorted(annotations['chip_id'].unique())
+    onehot = np.zeros((umi.shape[1], len(individuals)), dtype=np.float32)
+    onehot[np.arange(onehot.shape[0]),annotations['chip_id'].apply(lambda x: individuals.index(x))] = 1
+    onehot = pd.DataFrame(onehot, columns=individuals, index=umi.columns)
+    onehot.shape
+  #+END_SRC
+
+  #+RESULTS: onehot-qc
+  :RESULTS:
+  # Out[5]:
+  : (4995, 54)
+  :END:
+
+  Check that one-hot encoding is OK:
+
+  #+BEGIN_SRC ipython :async t
+    for _ in range(100):
+      gene = np.random.choice(umi.index)
+      ind = np.random.choice(individuals)
+      idx = individuals.index(ind)
+      assert (umi.loc[gene, (annotations['chip_id'] == ind).values] == 
+              umi.loc[gene, onehot.dot(np.eye(onehot.shape[1])[idx]).astype(bool)]).all()
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[5]:
+  :END:
+
+** Fit NB
 
   Estimate means and dispersions assuming no dropout.
 
@@ -665,7 +500,7 @@
   [[file:figure/zinb.org/nb-quantiles-dist.png]]
   :END:
 
-* Fit ZINB
+** Fit ZINB
 
   Estimate the parameters of the zero-inflated model assuming dropout per gene.
 
@@ -730,7 +565,7 @@
   [[file:figure/zinb.org/zinb-diagnostic.png]]
   :END:
 
-* Fit ZINB2
+** Fit ZINB2
 
   Estimate the parameters of the zero-inflated model assuming dropout per
   individual and gene.
@@ -796,3 +631,153 @@
   # Out[22]:
   [[file:figure/zinb.org/zinb2-diagnostic.png]]
   :END:
+* numpy/scipy implementation
+
+  Optimize the negative log-likelihood.
+
+  #+NAME: np-zinb-impl
+  #+BEGIN_SRC ipython
+    import scipy.optimize as so
+
+    def log(x):
+      """Numerically safe log"""
+      return np.log(x + 1e-8)
+
+    def sigmoid(x):
+      """Numerically safe sigmoid"""
+      lim = np.log(np.finfo(np.float64).resolution)
+      return np.clip(sp.expit(x), lim, -lim)
+
+    def zinb(theta, x, size):
+      theta, dropout = theta[:2], sigmoid(theta[2])
+      case_zero = log(dropout + (1 - dropout) * np.exp(-nb(theta, x, size)))
+      case_non_zero = log(1 - dropout) - nb(theta, x, size)
+      return -np.where(x < 1e-8, case_zero, case_non_zero).mean()
+
+    def nb(theta, x, size):
+      mean, inv_disp = np.exp(theta)
+      mean *= size
+      assert mean.shape == x.shape
+      return -(x * log(mean / inv_disp) -
+               x * log(1 + mean / inv_disp) -
+               inv_disp * log(1 + mean / inv_disp) +
+               sp.gammaln(x + inv_disp) -
+               sp.gammaln(inv_disp) -
+               sp.gammaln(x + 1)).mean()
+   #+END_SRC
+
+   #+RESULTS: np-zinb-impl
+   :RESULTS:
+   # Out[1]:
+   :END:
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[4]:
+   :END:
+
+   Use this to check the parameter estimation for a particular gene/individual.
+
+   #+BEGIN_SRC ipython
+     def extract_data(ind, gene):
+       with sqlite3.connect('/scratch/midway2/aksarkar/singlecell/browser.db') as conn:
+         umi = pd.read_sql("""select umi.value, annotation.size from umi, annotation 
+         where annotation.chip_id == ? and gene == ? and 
+         umi.sample == annotation.sample;""", con=conn, params=(ind, gene))
+         return umi
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[7]:
+   :END:
+
+   Shard the data to parallelize over nodes.
+
+   #+BEGIN_SRC ipython :async t
+     with sqlite3.connect('/home/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
+       annotation = pd.read_sql('select * from annotation', con=conn).set_index('sample')
+
+     keep_samples = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/quality-single-cells.txt', index_col=0, header=None)
+     keep_genes = pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/genes-pass-filter.txt', index_col=0, header=None)
+     keep_genes = keep_genes[keep_genes.values].index
+     i = 0
+     for chunk in pd.read_table('/home/aksarkar/projects/singlecell-qtl/data/scqtl-counts.txt.gz', index_col=0, chunksize=1000):
+       print('Processing chunk {}'.format(i))
+       chunk = (chunk
+                .loc[:,keep_samples.values.ravel()]
+                .filter(items=keep_genes, axis='index'))
+       if not chunk.empty:
+         chunk = (chunk
+                  .reset_index()
+                  .melt(id_vars='gene', var_name='sample')
+                  .merge(annotation, left_on='sample', right_index=True)
+                  .sort_values(['gene', 'chip_id', 'sample']))
+         chunk.to_csv('/scratch/midway2/aksarkar/singlecell/chunk-{}.txt.gz'.format(i), compression='gzip', sep='\t')
+         i += 1
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   :END:
+
+   Process each chunk in parallel.
+
+   #+BEGIN_SRC ipython :eval never :tangle /scratch/midway2/aksarkar/singlecell/np-zinb.py :noweb tangle
+     <<zinb-imports>>
+     import gzip
+     import os
+     import multiprocessing as mp
+     import sqlite3
+
+     <<np-zinb-impl>>
+
+     def fit_gene(chunk):
+       res0 = so.minimize(nb, x0=[0, 0], args=(chunk[:,0], chunk[:,1]))
+       pi0 = (chunk[:,0] == 0).sum() / chunk.shape[0] + 1e-8
+       res = so.minimize(zinb, x0=list(res0.x) + [sp.logit(pi0 + 1e-8)], args=(chunk[:,0], chunk[:,1]))
+       return list(res0.x) + [res0.fun, res0.success] + list(res.x) + [res.fun, res.success]
+
+     with mp.Pool() as pool:
+       chunk = pd.read_table('/scratch/midway2/aksarkar/singlecell/chunk-{}.txt.gz'.format(os.getenv('SLURM_ARRAY_TASK_ID')))
+       # Each subproblem has fixed size
+       num_genes = len(set(chunk['gene']))
+       num_samples = len(set(chunk['sample']))
+       num_samples_per_ind = chunk.iloc[:num_samples]['chip_id'].value_counts().sort_index().values
+       # Therefore we can just split on integer indices (instead of grouping)
+       breaks = num_samples * np.arange(num_genes).reshape(-1, 1) + np.cumsum(num_samples_per_ind).reshape(1, -1)
+       breaks = breaks.ravel()
+       res = pool.map(fit_gene, np.split(chunk[['value', 'size']].values, breaks[:-1]))
+
+     with gzip.open('/scratch/midway2/aksarkar/singlecell/result-{}.txt.gz'.format(os.getenv('SLURM_ARRAY_TASK_ID')), 'wt') as f:
+       for b in breaks:
+         gene, ind = chunk.iloc[b - 1][['gene', 'chip_id']]
+         print(gene, ind, *res.pop(0), file=f)
+   #+END_SRC
+
+   #+BEGIN_SRC sh :dir /scratch/midway2/aksarkar/singlecell
+     sbatch --partition=broadwl --job-name="np-zinb" --mem=4G -a 0-20 -n1 -c28 --exclusive
+     #!/bin/bash
+     source activate scqtl
+     python /scratch/midway2/aksarkar/singlecell/np-zinb.py
+   #+END_SRC
+
+   #+RESULTS:
+   : Submitted batch job 44066861
+
+   Populate the database.
+
+   #+BEGIN_SRC ipython :async t
+     with sqlite3.connect('/scratch/midway2/aksarkar/singlecell/browser.db') as conn:
+       conn.execute('drop table if exists params;')
+       for i in range(20):
+         for chunk in pd.read_table('/scratch/midway2/aksarkar/singlecell/result-{}.txt.gz'.format(i), sep=' ', chunksize=1000):
+           chunk.columns = ['gene', 'ind', 'nb_log_mean', 'nb_log_disp', 'nb_nll', 'nb_success', 'zinb2_log_mean', 'zinb2_log_disp', 'zinb2_logodds', 'zinb_nll', 'zinb_success']
+           chunk.to_sql(name='params', con=conn, index=False, if_exists='append')
+       conn.execute('create index ix_params on params(gene, ind);')
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   :END:
+
