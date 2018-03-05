@@ -51,22 +51,18 @@ def update_umi(attr, old, new):
       counts, _ = np.histogram(umi['value'].values, bins=edges)
       umi_data.data = bokeh.models.ColumnDataSource.from_df(pd.DataFrame({'left': edges[:-1], 'right': edges[1:], 'count': counts}))
 
-      params = pd.read_sql('select nb_log_mean, nb_log_disp, nb_nll, zinb2_log_mean, zinb2_log_disp, zinb2_logodds, zinb_nll from params where gene == ? and ind == ?', con=conn, params=(gene, ind))
-      if params['nb_nll'] < params['zinb_nll']:
-        prefix = 'nb'
-      else:
-        prefix = 'zinb2'
-      n = np.exp(params['{}_log_disp'.format(prefix)])
-      p = 1 / (1 + umi['size'] * np.exp(params['{}_log_mean'.format(prefix)] - params['{}_log_disp'.format(prefix)]).T)
-      assert n > 0
-      assert (p >= 0).all()
-      assert (p <= 1).all()
-      G = st.nbinom(n=n, p=p).pmf
+      params = pd.read_sql('select case when nb_nll < zinb_nll then nb_log_mean else zinb2_log_mean end as log_mean, case when nb_nll < zinb_nll then nb_log_disp else zinb2_log_disp end as log_disp, case when nb_nll < zinb_nll then null else zinb2_logodds end as logodds from params where gene == ? and ind == ?', con=conn, params=(gene, ind))
+      n = np.exp(params['log_disp'])
+      p = 1 / (1 + np.outer(umi['size'], np.exp(params['log_mean'] - params['log_disp'])))
+      assert (n > 0).all(), 'n must be non-negative'
+      assert (p >= 0).all(), 'p must be non-negative'
+      assert (p <= 1).all(), 'p must be <= 1'
+      G = st.nbinom(n=n.values.ravel(), p=p.ravel()).pmf
       grid = np.arange(19)
       pmf = np.array([G(x).mean() for x in grid])
-      if params['nb_nll'] > params['zinb_nll']:
-        pmf *= sp.expit(-params['{}_logodds'.format(prefix)])
-        pmf[0] += sp.expit(params['{}_logodds'.format(prefix)])
+      if params['logodds'] is not None:
+        pmf *= sp.expit(-params['logodds']).values
+        pmf[0] += sp.expit(params['logodds']).values
       exp_count = umi.shape[0] * pmf
       dist_data.data = bokeh.models.ColumnDataSource.from_df(pd.DataFrame({'x': .5 + grid, 'y': exp_count}))
     else:
