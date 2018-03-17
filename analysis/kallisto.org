@@ -145,6 +145,19 @@
 
   #+RESULTS:
  
-* Process the output
+  Process the output.
 
-  
+  #+BEGIN_SRC sh :dir /scratch/midway2/aksarkar/singlecell/run-kallisto
+    sbatch --partition=broadwl
+    #!/bin/bash
+    set -e
+    function process () {
+        bzcat $1 | awk -v ind=$(basename $(dirname $1)) 'NR > 1 {split($1, target, "|"); tpm[target[2]] += $NF} END {for (gene in tpm) {print ind, gene, tpm[gene]}}'
+    }
+    export -f process
+    find -name "abundance.tsv.bz2" | parallel --halt now,fail=1 -j1 process | gzip >bulk-ipsc-tpm.txt.gz
+    cp bulk-ipsc-tpm.txt.gz /project2/mstephens/aksarkar/projects/singlecell-qtl/data/kallisto/
+  #+END_SRC
+
+  #+RESULTS:
+  : Submitted batch job 44366802
