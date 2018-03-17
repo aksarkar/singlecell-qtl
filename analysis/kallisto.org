@@ -112,11 +112,39 @@
   Run quantification.
 
   #+BEGIN_SRC sh :dir /scratch/midway2/aksarkar/singlecell/run-kallisto
-    sbatch --partition=broadwl -a 1 --mem=5G
+    sbatch --partition=broadwl -a 2-58 --mem=5G -d afterok:44358869
     #!/bin/bash
     source activate scqtl
     awk 'BEGIN {FS = "\t"; i = 0; while (getline < "metadata.txt") {id[i] = $2; name[i] = $NF; i++} task = ENVIRON["SLURM_ARRAY_TASK_ID"]; system("kallisto quant --plaintext --single -l 200 -s 50 -i transcripts.idx -o " name[task] " " id[task] ".fastq.gz")}'
   #+END_SRC
 
   #+RESULTS:
-  : Submitted batch job 44358556
+  : Submitted batch job 44358929
+
+  Compress the output.
+
+  #+BEGIN_SRC sh :dir /scratch/midway2/aksarkar/singlecell/run-kallisto
+    sbatch --partition=broadwl -n1 -c28 --exclusive
+    #!/bin/bash
+    find -name "abundance.tsv" | parallel bzip2
+  #+END_SRC
+
+  #+RESULTS:
+  : Submitted batch job 44363775
+
+  Move the output to permanent storage.
+
+  #+BEGIN_SRC sh :dir /scratch/midway2/aksarkar/singlecell/run-kallisto
+    test -e .rsync-filter || cat >.rsync-filter <<EOF
+    + */
+    + abundance.tsv.bz2
+    - *
+    EOF
+    rsync -FFau /scratch/midway2/aksarkar/singlecell/run-kallisto/ /project2/mstephens/aksarkar/projects/singlecell-qtl/data/kallisto/
+  #+END_SRC
+
+  #+RESULTS:
+ 
+* Process the output
+
+  
