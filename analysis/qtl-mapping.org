@@ -411,7 +411,7 @@
 
      \[ T^*_{ij} = \exp\left(f\left(\sum_i x_{ij}\right)\right) g(w_j) \]
 
-     [[*Recall bulk eQTLs][Using log CPM]] (under the assumption that we never compare genes to each
+     [[*Recall bulk eQTLs from log CPM][Using log CPM]] (under the assumption that we never compare genes to each
      other) yields 1279 eQTLs (89%).
 
   2. ~fastqtl~ expects gene start/end, and only takes /cis/-SNPs around the
@@ -675,7 +675,7 @@
 
 * Recall bulk eQTLs from log TPM
 
-  We [[kallisto.org][reprocessed the bulk RNA-Seq data]] using ~kallisto~. Read the TPM
+  We [[file:kallisto.org][reprocessed the bulk RNA-Seq data]] using ~kallisto~. Read the TPM
   matrix and normalize.
 
   #+BEGIN_SRC ipython :noweb no-export
@@ -726,14 +726,14 @@
   Compute principal components.
 
   #+BEGIN_SRC ipython
-    covars = pd.DataFrame(skd.PCA(n_components=10).fit(bulk_log_tpm).components_, columns=bulk_log_tpm.columns)
+    covars = pd.DataFrame(skd.PCA(n_components=4).fit(bulk_log_tpm).components_, columns=bulk_log_tpm.columns)
     covars.index.name = 'id'
     covars.to_csv('/scratch/midway2/aksarkar/singlecell/recall-bulk/covars.txt', sep='\t')
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[34]:
+  # Out[43]:
   :END:
 
   Run ~qtltools~
@@ -741,7 +741,7 @@
   #+CALL: qtltools(pheno="bulk", geno="/scratch/midway2/aksarkar/singlecell/reproduce-yang/yri-dosages.vcf.gz", op="--cov covars.txt  --window 100000 --permute 10000") :dir /scratch/midway2/aksarkar/singlecell/recall-bulk
 
   #+RESULTS:
-  : Submitted batch job 44367281
+  : Submitted batch job 44367544
 
   Read the output. *Important: this loses 201 genes (is this a bug in
   ~qtltools~)?*
@@ -753,7 +753,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[37]:
+  # Out[44]:
   :END:
 
   Take QTLs with \(\mathrm{FDR} < 0.1\).
@@ -766,8 +766,8 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[39]:
-  : 1065
+  # Out[45]:
+  : 865
   :END:
 
 * Call eQTLs from pooled scRNA-Seq
