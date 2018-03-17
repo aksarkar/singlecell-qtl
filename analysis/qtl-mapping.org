@@ -33,7 +33,7 @@
   #+CALL: ipython3(memory="4G", venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 44350818
+  : Submitted batch job 44366923
 
   #+BEGIN_SRC ipython
     %matplotlib inline
@@ -526,7 +526,7 @@
   # Out[168]:
   :END:
 
-* Recall bulk eQTLs
+* Recall bulk eQTLs from log CPM
 
   Read the counts matrix.
 
@@ -671,6 +671,103 @@
   :RESULTS:
   # Out[132]:
   : 1279
+  :END:
+
+* Recall bulk eQTLs from log TPM
+
+  We [[kallisto.org][reprocessed the bulk RNA-Seq data]] using ~kallisto~. Read the TPM
+  matrix and normalize.
+
+  #+BEGIN_SRC ipython :noweb no-export
+    <<r-wrappers>>
+    bulk_log_tpm = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/kallisto/bulk-ipsc-tpm.txt.gz', header=None, sep=' ')
+    bulk_log_tpm = np.log(bulk_log_tpm.pivot(columns=0, index=1, values=2) + 1)
+    # Important: need to throw out all zero rows because they blow up
+    # standardization
+    bulk_log_tpm = (bulk_log_tpm[bulk_log_tpm.apply(lambda x: x.sum() > 0, axis=1)]
+                    .transform(lambda x: (x - x.mean()) / x.std(), axis=1)
+                    .apply(qqnorm, axis=0))
+    bulk_log_tpm.index = [x.split('.')[0] for x in bulk_log_tpm.index]
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[8]:
+  :END:
+
+  Get the TSS information. Use the annotation data (ENSEMBL 75) in this
+  repository to be consistent with the single cell data.
+
+  Write the phenotype matrix in ~qtltools~ format. *Important: this loses 1034
+  genes*
+
+  #+BEGIN_SRC ipython :noweb no-export
+    <<get-gene-info>>
+    <<write-pheno-def>>
+    write_pheno_file(
+      bulk_log_tpm,
+      gene_info,
+      holdout=False,
+      output_file='/scratch/midway2/aksarkar/singlecell/recall-bulk/bulk.bed')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[33]:
+  :END:
+
+  Index the phenotype file.
+
+  #+CALL: tabix(input="bulk.bed") :dir /scratch/midway2/aksarkar/singlecell/recall-bulk
+
+  #+RESULTS:
+  : Submitted batch job 44367279
+
+  Compute principal components.
+
+  #+BEGIN_SRC ipython
+    covars = pd.DataFrame(skd.PCA(n_components=10).fit(bulk_log_tpm).components_, columns=bulk_log_tpm.columns)
+    covars.index.name = 'id'
+    covars.to_csv('/scratch/midway2/aksarkar/singlecell/recall-bulk/covars.txt', sep='\t')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[34]:
+  :END:
+
+  Run ~qtltools~
+
+  #+CALL: qtltools(pheno="bulk", geno="/scratch/midway2/aksarkar/singlecell/reproduce-yang/yri-dosages.vcf.gz", op="--cov covars.txt  --window 100000 --permute 10000") :dir /scratch/midway2/aksarkar/singlecell/recall-bulk
+
+  #+RESULTS:
+  : Submitted batch job 44367281
+
+  Read the output. *Important: this loses 201 genes (is this a bug in
+  ~qtltools~)?*
+
+  #+BEGIN_SRC ipython :noweb no-export
+    <<read-qtltools-def>>
+    bulk_qtls = read_qtltools_output('recall-bulk/bulk')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[37]:
+  :END:
+
+  Take QTLs with \(\mathrm{FDR} < 0.1\).
+
+  #+BEGIN_SRC ipython :noweb no-export
+    <<r-wrappers>>
+    bulk_qtls['fdr_pass'] = bh(bulk_qtls['p_beta']) < .1
+    bulk_qtls['fdr_pass'].sum()
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[39]:
+  : 1065
   :END:
 
 * Call eQTLs from pooled scRNA-Seq
