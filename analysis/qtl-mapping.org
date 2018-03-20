@@ -1332,19 +1332,6 @@
   # Out[14]:
   :END:
 
-  Compute principal components of the mean matrix.
-
-  #+BEGIN_SRC ipython
-    covars = pd.DataFrame(skd.PCA(n_components=10).fit(log_mean).components_, columns=log_mean.columns)
-    covars.index.name = 'id'
-    covars.to_csv('/scratch/midway2/aksarkar/singlecell/scqtl-mapping/log-mean-pcs.txt', sep='\t')
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[146]:
-  :END:
-
   Write out the [[https://qtltools.github.io/qtltools/pages/input_files.html][phenotype file]] for ~qtltools~. Hold out even chromosomes while
   optimizing the power to detect eQTLs.
 
@@ -1451,4 +1438,286 @@
   #+RESULTS:
   :RESULTS:
   # Out[51]:
+  :END:
+
+* Call CV-QTLs from sample moments
+
+  #+BEGIN_SRC ipython
+    umi = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/scqtl-counts.txt.gz', index_col=0)
+    annotations = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/scqtl-annotation.txt')
+    keep_samples = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/quality-single-cells.txt', index_col=0, header=None)
+    keep_genes = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/genes-pass-filter.txt', index_col=0, header=None)
+    umi = umi.loc[keep_genes.values.ravel(),keep_samples.values.ravel()]
+    annotations = annotations.loc[keep_samples.values.ravel()]
+    keep_inds = annotations.groupby('chip_id').apply(lambda x: len(x) >= 50)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[2]:
+  :END:
+
+  #+BEGIN_SRC ipython
+    cv = umi.groupby(annotations['chip_id'].values, axis=1).agg(lambda x: x.std(axis=1) / x.mean(axis=1)).dropna()
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[76]:
+  :END:
+
+  Normalize the variance matrix analagous to the bulk data.
+
+  #+BEGIN_SRC ipython :noweb no-export
+    <<r-wrappers>>
+    cv = var.loc[:,keep_inds].transform(lambda x: (x - x.mean()) / x.std(), axis=1).apply(qqnorm, axis=0)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[77]:
+  :END:
+
+  Write out the [[https://qtltools.github.io/qtltools/pages/input_files.html][phenotype file]] for ~qtltools~. Hold out even chromosomes while
+  optimizing the power to detect eQTLs.
+
+  #+BEGIN_SRC ipython :noweb no-export
+    <<get-gene-info>>
+    <<write-pheno-def>>
+    write_pheno_file(cv, gene_info, '/scratch/midway2/aksarkar/singlecell/scqtl-mapping/cv.bed', holdout=True)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[78]:
+  :END:
+
+  Index the phenotype file.
+
+  #+CALL: tabix(input="cv.bed") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
+
+  #+RESULTS:
+  : Submitted batch job 44403650
+
+  Run ~qtltools~.
+
+  #+CALL: qtltools(pheno="cv", geno="/scratch/midway2/aksarkar/singlecell/reproduce-yang/yri-dosages.vcf.gz", op="--window 100000 --permute 10000") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
+
+  #+RESULTS:
+  : Submitted batch job 44403660
+
+  Read the output.
+
+  #+BEGIN_SRC ipython :noweb no-export
+    <<read-qtltools-def>>
+    cv_qtls = read_qtltools_output('scqtl-mapping/cv')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[79]:
+  :END:
+
+  Check the beta approximation to the permutation p-values.
+
+  #+BEGIN_SRC ipython :noweb no-export :ipyfile figure/qtl-mapping.org/cv-qtl-beta-approx.png
+    <<plot-approx-perm-def>>
+    plot_approx_permutation(cv_qtls)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[80]:
+  [[file:figure/qtl-mapping.org/cv-qtl-beta-approx.png]]
+  :END:
+
+  Plot a QQ plot of the permutation p-values.
+
+  #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/cv-qtl-qq.png
+    plt.clf()
+    plt.gcf().set_size_inches(6, 6)
+    plt.scatter(-np.log10(np.arange(1, 1 + cv_qtls.shape[0]) / cv_qtls.shape[0]), -np.log10(cv_qtls['p_beta']), s=1, c='k')
+    plt.plot([0, np.log10(cv_qtls.shape[0])], [0, np.log10(cv_qtls.shape[0])], c='r', ls='--')
+    plt.xlabel('Expected $-\log_{10}(p)$')
+    _ = plt.ylabel('Observed $-\log_{10}(p)$')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[81]:
+  [[file:figure/qtl-mapping.org/cv-qtl-qq.png]]
+  :END:
+
+  Take QTLs at FDR 10%.
+
+  #+BEGIN_SRC ipython
+    cv_qtls['fdr_pass'] = bh(cv_qtls['p_beta']) < .1
+    cv_qtls['fdr_pass'].sum()
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[84]:
+  : 42
+  :END:
+
+  #+BEGIN_SRC ipython
+    with sqlite3.connect('/project2/mstephens/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
+      X, Y = extract_qtl_gene_pair(cv_qtls[cv_qtls['fdr_pass']], var, dosages='/scratch/midway2/aksarkar/singlecell/reproduce-yang/YRI_SNPs_2_IPSC.txt.gen.gz')
+      X.reset_index().melt(id_vars='gene', var_name='ind').to_sql('cv_qtl_geno', conn, index=False, if_exists='replace')
+      conn.execute('create index ix_cv_qtl_geno on cv_qtl_geno(gene, ind);')
+      Y.reset_index().melt(id_vars='gene', var_name='ind').to_sql('var', conn, index=False, if_exists='replace')
+      conn.execute('create index ix_var on var(gene, ind);')
+      cv_qtls[['gene', 'id', 'beta', 'p_beta', 'fdr_pass']].to_sql('cv_qtls', conn, index=False, if_exists='replace')
+      conn.execute('create index ix_cv_qtls on cv_qtls(gene);')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[85]:
+  :END:
+
+* Call Fano factor-QTLs from sample moments
+
+  #+BEGIN_SRC ipython
+    umi = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/scqtl-counts.txt.gz', index_col=0)
+    annotations = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/scqtl-annotation.txt')
+    keep_samples = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/quality-single-cells.txt', index_col=0, header=None)
+    keep_genes = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/genes-pass-filter.txt', index_col=0, header=None)
+    umi = umi.loc[keep_genes.values.ravel(),keep_samples.values.ravel()]
+    annotations = annotations.loc[keep_samples.values.ravel()]
+    keep_inds = annotations.groupby('chip_id').apply(lambda x: len(x) >= 50)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[2]:
+  :END:
+
+  #+BEGIN_SRC ipython
+    fano = umi.groupby(annotations['chip_id'].values, axis=1).agg(lambda x: x.var(axis=1) / x.mean(axis=1)).dropna()
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[67]:
+  :END:
+
+  Normalize the variance matrix analagous to the bulk data.
+
+  #+BEGIN_SRC ipython :noweb no-export
+    <<r-wrappers>>
+    fano = var.loc[:,keep_inds].transform(lambda x: (x - x.mean()) / x.std(), axis=1).apply(qqnorm, axis=0)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[69]:
+  :END:
+
+  Write out the [[https://qtltools.github.io/qtltools/pages/input_files.html][phenotype file]] for ~qtltools~. Hold out even chromosomes while
+  optimizing the power to detect eQTLs.
+
+  #+BEGIN_SRC ipython :noweb no-export
+    <<get-gene-info>>
+    <<write-pheno-def>>
+    write_pheno_file(fano, gene_info, '/scratch/midway2/aksarkar/singlecell/scqtl-mapping/fano.bed', holdout=True)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[70]:
+  :END:
+
+  Index the phenotype file.
+
+  #+CALL: tabix(input="fano.bed") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
+
+  #+RESULTS:
+  : Submitted batch job 44403347
+
+  Run ~qtltools~.
+
+  #+CALL: qtltools(pheno="fano", geno="/scratch/midway2/aksarkar/singlecell/reproduce-yang/yri-dosages.vcf.gz", op="--window 100000 --permute 10000") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
+
+  #+RESULTS:
+
+  Read the output.
+
+  #+BEGIN_SRC ipython :noweb no-export
+    <<read-qtltools-def>>
+    fano_qtls = read_qtltools_output('scqtl-mapping/fano')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[71]:
+  :END:
+
+  Check the beta approximation to the permutation p-values.
+
+  #+BEGIN_SRC ipython :noweb no-export :ipyfile figure/qtl-mapping.org/fano-qtl-beta-approx.png
+    <<plot-approx-perm-def>>
+    plot_approx_permutation(fano_qtls)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[72]:
+  [[file:figure/qtl-mapping.org/fano-qtl-beta-approx.png]]
+  :END:
+
+  Plot a QQ plot of the permutation p-values.
+
+  #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/fano-qtl-qq.png
+    plt.clf()
+    plt.gcf().set_size_inches(6, 6)
+    plt.scatter(-np.log10(np.arange(1, 1 + fano_qtls.shape[0]) / fano_qtls.shape[0]), -np.log10(fano_qtls['p_beta']), s=1, c='k')
+    plt.plot([0, np.log10(fano_qtls.shape[0])], [0, np.log10(fano_qtls.shape[0])], c='r', ls='--')
+    plt.xlabel('Expected $-\log_{10}(p)$')
+    _ = plt.ylabel('Observed $-\log_{10}(p)$')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[73]:
+  [[file:figure/qtl-mapping.org/fano-qtl-qq.png]]
+  :END:
+
+  Take QTLs at FDR 10%.
+
+  #+BEGIN_SRC ipython
+    fano_qtls['fdr_pass'] = bh(fano_qtls['p_beta']) < .1
+    fano_qtls['fdr_pass'].sum()
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[74]:
+  : 34
+  :END:
+
+  Write out the QTLs.
+
+  #+CALL: replication-tests-def()
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[34]:
+  :END:
+
+  #+BEGIN_SRC ipython
+    with sqlite3.connect('/project2/mstephens/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
+      X, Y = extract_qtl_gene_pair(fano_qtls[fano_qtls['fdr_pass']], fano, dosages='/scratch/midway2/aksarkar/singlecell/reproduce-yang/YRI_SNPs_2_IPSC.txt.gen.gz')
+      X.reset_index().melt(id_vars='gene', var_name='ind').to_sql('fano_qtl_geno', conn, index=False, if_exists='replace')
+      conn.execute('create index ix_fano_qtl_geno on fano_qtl_geno(gene, ind);')
+      Y.reset_index().melt(id_vars='gene', var_name='ind').to_sql('fano', conn, index=False, if_exists='replace')
+      conn.execute('create index ix_fano on fano(gene, ind);')
+      fano_qtls[['gene', 'id', 'beta', 'p_beta', 'fdr_pass']].to_sql('fano_qtls', conn, index=False, if_exists='replace')
+      conn.execute('create index ix_fano_qtls on fano_qtls(gene);')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[75]:
   :END:
