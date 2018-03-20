@@ -1444,9 +1444,11 @@
       conn.execute('create index ix_var_qtl_geno on var_qtl_geno(gene, ind);')
       Y.reset_index().melt(id_vars='gene', var_name='ind').to_sql('var', conn, index=False, if_exists='replace')
       conn.execute('create index ix_var on var(gene, ind);')
+      var_qtls[['gene', 'id', 'beta', 'p_beta', 'fdr_pass']].to_sql('var_qtls', conn, index=False, if_exists='replace')
+      conn.execute('create index ix_var_qtls on var_qtls(gene);')
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[48]:
+  # Out[51]:
   :END:
