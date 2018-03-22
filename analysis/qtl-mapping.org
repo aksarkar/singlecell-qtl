@@ -18,8 +18,8 @@
 
   1. [[*Reproduce bulk eQTL calls][We reproduce eQTLs]] called on the bulk RNA-Seq
   2. [[*Replicate bulk eQTLs in the single cell data][We replicate bulk eQTLs]] in the scRNA-Seq data
-  3. [[*Call mean-QTLs in the single cell data][We call mean QTLs]] in the scRNA-Seq data
-  4. [[*Call dispersion-QTLs][We call dispersion QTLs]] in the scRNA-Seq data
+  3. [[*Analysis using sample moments][We call mean/variance/CV/Fano QTLs]] using sample moments
+  4. [[*Analysis using ZINB][We call mean/variance/CV/Fano QTLs]] using ZINB parameters
 
 * Setup                                                            :noexport:
 
@@ -33,7 +33,7 @@
   #+CALL: ipython3(memory="16G", venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 44400345
+  : Submitted batch job 44437678
 
   #+BEGIN_SRC ipython
     %matplotlib inline
@@ -80,7 +80,27 @@
 
   #+RESULTS: r-wrappers
   :RESULTS:
-  # Out[12]:
+  # Out[4]:
+  :END:
+
+  #+NAME: get-gene-info
+  #+BEGIN_SRC ipython
+    gene_info = (pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/scqtl-genes.txt.gz')
+                 .set_index('gene')
+                 .query('source == "H. sapiens"')
+                 .query('chr != "hsX"')
+                 .query('chr != "hsY"')
+                 .query('chr != "hsMT"'))
+  #+END_SRC
+
+  #+RESULTS: get-gene-info
+  :RESULTS:
+  # Out[5]:
+  :END:
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[40]:
   :END:
 
   #+NAME: write-pheno-def
@@ -113,7 +133,7 @@
 
   #+RESULTS: write-pheno-def
   :RESULTS:
-  # Out[13]:
+  # Out[6]:
   :END:
 
   #+NAME: tabix
@@ -173,7 +193,7 @@
 
   #+RESULTS: read-qtltools-def
   :RESULTS:
-  # Out[14]:
+  # Out[7]:
   :END:
 
   #+RESULTS:
@@ -194,7 +214,23 @@
 
   #+RESULTS: plot-approx-perm-def
   :RESULTS:
-  # Out[15]:
+  # Out[8]:
+  :END:
+
+  #+NAME: qqplot
+  #+BEGIN_SRC ipython
+    def qqplot(qtls):
+      plt.clf()
+      plt.gcf().set_size_inches(6, 6)
+      plt.scatter(-np.log10(np.arange(1, 1 + qtls.shape[0]) / qtls.shape[0]), -np.log10(qtls['p_beta']), s=1, c='k')
+      plt.plot([0, np.log10(qtls.shape[0])], [0, np.log10(qtls.shape[0])], c='r', ls='--')
+      plt.xlabel('Expected $-\log_{10}(p)$')
+      _ = plt.ylabel('Observed $-\log_{10}(p)$')
+  #+END_SRC
+
+  #+RESULTS: qqplot
+  :RESULTS:
+  # Out[9]:
   :END:
 
   #+NAME: replication-tests-def
@@ -242,10 +278,11 @@
 
   #+RESULTS: replication-tests-def
   :RESULTS:
-  # Out[16]:
+  # Out[10]:
   :END:
 
-* Test validity of approximate permutation test
+* Preliminaries
+** Test validity of approximate permutation test
 
   ~qtltools~ tries to calibrate false discovery rates using the following
   procedure:
@@ -289,8 +326,7 @@
   Write out the phenotype file for ~qtltools~. Important: GEUVADIS VCFs code
   chromosome without ~chr~.
 
-  #+BEGIN_SRC ipython :noweb no-export
-    <<write-pheno-def>>
+  #+BEGIN_SRC ipython
     write_pheno_file(geuvadis, gene_info, '/scratch/midway2/aksarkar/singlecell/test.bed')
   #+END_SRC
 
@@ -329,8 +365,7 @@
 
   Read the results.
 
-  #+BEGIN_SRC ipython :noweb no-export
-    <<read-qtltools-def>>
+  #+BEGIN_SRC ipython
     geuvadis_qtls = read_qtltools_output('test')
   #+END_SRC
 
@@ -341,8 +376,7 @@
 
   Check the beta approximation to the permutation p-values.
 
-  #+BEGIN_SRC ipython :noweb no-export :ipyfile figure/qtl-mapping.org/geuvadis-beta-approx.png
-    <<plot-approx-perm-def>>
+  #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/geuvadis-beta-approx.png
     plot_approx_permutation(geuvadis_qtls)
   #+END_SRC
 
@@ -365,8 +399,7 @@
   # Out[17]:
   :END:
 
-  #+BEGIN_SRC ipython :noweb no-export
-    <<write-pheno-def>>
+  #+BEGIN_SRC ipython
     write_pheno_file(geuvadis[subset], gene_info, '/scratch/midway2/aksarkar/singlecell/test.bed')
   #+END_SRC
 
@@ -390,9 +423,7 @@
   #+RESULTS:
   : Submitted batch job 44139682
 
-  #+BEGIN_SRC ipython :noweb no-export :ipyfile figure/qtl-mapping.org/geuvadis-54-beta-approx.png
-    <<read-qtltools-def>>
-    <<plot-approx-perm-def>>
+  #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/geuvadis-54-beta-approx.png
     geuvadis_54_qtls = read_qtltools_output('test')
     plot_approx_permutation(geuvadis_54_qtls)
   #+END_SRC
@@ -403,7 +434,7 @@
   [[file:figure/qtl-mapping.org/geuvadis-54-beta-approx.png]]
   :END:
 
-* Reproduce bulk eQTL calls
+** Reproduce bulk eQTL calls
 
   The iPSC bulk eQTLs were called in [[https://genome.cshlp.org/content/28/1/122.long][Banovich et al 2018]].
 
@@ -470,8 +501,7 @@
 
   Read ~fastqtl~ output.
 
-  #+BEGIN_SRC ipython :noweb no-export
-    <<read-qtltools-def>>
+  #+BEGIN_SRC ipython
     bulk_qtls = read_fastqtl_output('reproduce-yang/bulk')
   #+END_SRC
 
@@ -500,8 +530,7 @@
   #+RESULTS:
   : Submitted batch job 44332903
 
-  #+BEGIN_SRC ipython :noweb no-export
-    <<read-qtltools-def>>
+  #+BEGIN_SRC ipython
     bulk_qtls = read_qtltools_output('reproduce-yang/test')
   #+END_SRC
 
@@ -550,7 +579,7 @@
   # Out[168]:
   :END:
 
-* Recall bulk eQTLs from log CPM
+** Recall bulk eQTLs from log CPM
 
   Read the counts matrix.
 
@@ -584,8 +613,7 @@
   unnecessary because we only ever compare counts for the same gene across
   individuals.
 
-  #+BEGIN_SRC ipython :noweb no-export
-    <<r-wrappers>>
+  #+BEGIN_SRC ipython
     bulk_log_cpm = (cpm(bulk_counts)
                     .transform(lambda x: (x - x.mean()) / x.std(), axis=1)
                     .apply(qqnorm, axis=0))
@@ -609,29 +637,11 @@
   # Out[128]:
   :END:
 
-  Get the TSS information. Use the annotation data (ENSEMBL 75) in this
-  repository to be consistent with the single cell data.
+  Write the phenotype matrix in ~qtltools~ format.  Use the annotation data
+  (ENSEMBL 75) in this repository to be consistent with the single cell
+  data. *Important: this loses 1716 genes (are they pseudogenes?)*
 
-  #+NAME: get-gene-info
   #+BEGIN_SRC ipython
-    gene_info = (pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/scqtl-genes.txt.gz')
-                 .set_index('gene')
-                 .query('source == "H. sapiens"')
-                 .query('chr != "hsX"')
-                 .query('chr != "hsY"')
-                 .query('chr != "hsMT"'))
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[40]:
-  :END:
-
-  Write the phenotype matrix in ~qtltools~ format. *Important: this loses 1716
-  genes (are they pseudogenes?)*
-
-  #+BEGIN_SRC ipython :noweb no-export
-    <<write-pheno-def>>
     write_pheno_file(
       bulk_log_cpm,
       gene_info,
@@ -673,8 +683,7 @@
   Read the output. *Important: this loses 201 genes (is this a bug in
   ~qtltools~)?*
 
-  #+BEGIN_SRC ipython :noweb no-export
-    <<read-qtltools-def>>
+  #+BEGIN_SRC ipython
     bulk_qtls = read_qtltools_output('recall-bulk/bulk')
   #+END_SRC
 
@@ -685,8 +694,7 @@
 
   Take QTLs with \(\mathrm{FDR} < 0.1\).
 
-  #+BEGIN_SRC ipython :noweb no-export
-    <<r-wrappers>>
+  #+BEGIN_SRC ipython
     bulk_qtls['fdr_pass'] = bh(my_bulk_qtls['p_beta']) < .1
     bulk_qtls['fdr_pass'].sum()
   #+END_SRC
@@ -697,13 +705,12 @@
   : 1279
   :END:
 
-* Recall bulk eQTLs from log TPM
+** Recall bulk eQTLs from log TPM
 
   We [[file:kallisto.org][reprocessed the bulk RNA-Seq data]] using ~kallisto~. Read the TPM
   matrix and normalize.
 
-  #+BEGIN_SRC ipython :noweb no-export
-    <<r-wrappers>>
+  #+BEGIN_SRC ipython
     bulk_log_tpm = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/kallisto/bulk-ipsc-tpm.txt.gz', header=None, sep=' ')
     bulk_log_tpm = np.log(bulk_log_tpm.pivot(columns=0, index=1, values=2) + 1)
     # Important: need to throw out all zero rows because they blow up
@@ -740,9 +747,7 @@
   Write the phenotype matrix in ~qtltools~ format. *Important: this loses 1034
   genes*
 
-  #+BEGIN_SRC ipython :noweb no-export
-    <<get-gene-info>>
-    <<write-pheno-def>>
+  #+BEGIN_SRC ipython
     write_pheno_file(
       bulk_log_tpm,
       gene_info,
@@ -785,8 +790,7 @@
   Read the output. *Important: this loses 201 genes (is this a bug in
   ~qtltools~)?*
 
-  #+BEGIN_SRC ipython :noweb no-export
-    <<read-qtltools-def>>
+  #+BEGIN_SRC ipython
     bulk_qtls = read_qtltools_output('recall-bulk/bulk')
   #+END_SRC
 
@@ -814,8 +818,7 @@
 
   Take QTLs with \(\mathrm{FDR} < 0.1\).
 
-  #+BEGIN_SRC ipython :noweb no-export
-    <<r-wrappers>>
+  #+BEGIN_SRC ipython
     bulk_qtls['fdr_pass'] = bh(bulk_qtls['p_beta']) < .1
     bulk_qtls['fdr_pass'].sum()
   #+END_SRC
@@ -826,7 +829,94 @@
   : 702
   :END:
 
-* Call eQTLs from pooled scRNA-Seq
+* Replicate bulk eQTLs in the single cell data
+
+  Read the reported bulk eQTLs.
+
+  #+BEGIN_SRC ipython
+    bulk_qtls = pd.read_table('/scratch/midway2/aksarkar/singlecell/reproduce-yang/bulk-qtls.txt.gz')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[21]:
+  :END:
+
+  Read the estimated parameters \(\log \mu_{ik}\). Exclude individuals with
+  fewer than 50 cells.
+
+  #+NAME: read-log-mu
+  #+BEGIN_SRC ipython
+    with sqlite3.connect('/project2/mstephens/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
+      log_mean = (pd.read_sql(
+        """select gene, ind, log_mu from params where ind in 
+        (select chip_id from annotation group by chip_id 
+        having count(distinct sample) >= 50);""", conn)
+                  .pivot(index='gene', columns='ind', values='log_mu'))
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[26]:
+  :END:
+
+  Test each bulk QTL-gene pair in the single cell data. *Important: use imputed
+  dosage data.*
+
+  #+BEGIN_SRC ipython
+    X, Y = extract_qtl_gene_pair(bulk_qtls[bulk_qtls['fdr_pass']], log_mean, dosages='/scratch/midway2/aksarkar/singlecell/reproduce-yang/YRI_SNPs_2_IPSC.txt.gen.gz')
+    bulk_sc_replication = replication_tests(X, Y)
+    bulk_sc_replication = bulk_qtls.merge(
+      bulk_sc_replication,
+      on='gene',
+      suffixes=['_bulk', '_sc'])[['gene', 'id', 'beta_bulk', 'p_bulk', 'beta_sc', 'p_sc']]
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[27]:
+  :END:
+
+  Define replication to be nominally significant (\(p < 0.05\)) and having the
+  same effect direction.
+
+  #+BEGIN_SRC ipython
+    bulk_sc_replication['replicated'] = bulk_sc_replication.apply(lambda x: x['p_sc'] < 0.05 and x['beta_bulk'] * x['beta_sc'] > 0, axis=1)
+    bulk_sc_replication['replicated'].sum() / bulk_sc_replication.shape[0]
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[28]:
+  : 0.8557588805166846
+  :END:
+
+  Write the data to the database.
+
+  #+BEGIN_SRC ipython
+    with sqlite3.connect('/project2/mstephens/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
+      X.reset_index().melt(id_vars='gene', var_name='ind').to_sql('genotype', con=conn, index=False, if_exists='replace')
+      conn.execute('create index ix_genotype on genotype(gene, ind);')
+      (bulk_sc_replication[['gene', 'id', 'beta_bulk', 'p_bulk', 'beta_sc', 'p_sc', 'replicated']]
+       .to_sql('qtls', con=conn, index=False, if_exists='replace'))
+      conn.execute('create index ix_qtls on qtls(gene);')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[29]:
+  :END:
+
+* Analysis using sample moments
+
+  The simplest possible way to estimate means/variances/dispersions to use as
+  quantitative phenotypes is to use the sample moments.
+
+  Intuitively, the phenotypes defined this way will be confounded by
+  differential proportion of zeros between individuals, but we need to quantify
+  the resulting loss in power.
+
+** Call eQTLs from pooled scRNA-Seq
 
   Read and pool the UMI data.
 
@@ -849,13 +939,12 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[86]:
+  # Out[11]:
   :END:
 
   Normalize the pooled counts.
 
-  #+BEGIN_SRC ipython :noweb no-export
-    <<r-wrappers>>
+  #+BEGIN_SRC ipython
     pooled_cpm = (cpm(pooled_counts)
                   .transform(lambda x: (x - x.mean()) / x.std(), axis=1)
                   .apply(qqnorm, axis=0))
@@ -863,7 +952,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[87]:
+  # Out[12]:
   :END:
 
   Compute principal components and write out the covariate file.
@@ -876,20 +965,18 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[88]:
+  # Out[13]:
   :END:
 
   Write out the phenotype file.
 
-  #+BEGIN_SRC ipython :noweb no-export
-    <<get-gene-info>>
-    <<write-pheno-def>>
+  #+BEGIN_SRC ipython
     write_pheno_file(pooled_cpm, gene_info, holdout=True, output_file='/scratch/midway2/aksarkar/singlecell/scqtl-mapping/pooled.bed')
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[89]:
+  # Out[15]:
   :END:
 
   Index the phenotype file.
@@ -897,36 +984,34 @@
   #+CALL: tabix(input="pooled.bed") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
 
   #+RESULTS:
-  : Submitted batch job 44383946
+  : Submitted batch job 44420815
 
   Run ~qtltools~
 
   #+CALL: qtltools(pheno="pooled", geno="/scratch/midway2/aksarkar/singlecell/reproduce-yang/yri-dosages.vcf.gz", op="--cov pooled-covars.txt  --window 100000 --permute 10000") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
 
   #+RESULTS:
-  : Submitted batch job 44383947
+  : Submitted batch job 44420819
 
   Read the output. *Important: this loses 200 genes (is this a bug in
   ~qtltools~)?*
 
-  #+BEGIN_SRC ipython :noweb no-export
-    <<read-qtltools-def>>
+  #+BEGIN_SRC ipython
     pooled_qtls = read_qtltools_output('scqtl-mapping/pooled')
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[90]:
+  # Out[16]:
   :END:
 
-  #+BEGIN_SRC ipython :noweb no-export :ipyfile figure/qtl-mapping.org/pooled-cpm-beta-approx.png
-    <<plot-approx-perm-def>>
+  #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/pooled-cpm-beta-approx.png
     plot_approx_permutation(pooled_qtls)
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[91]:
+  # Out[17]:
   [[file:figure/qtl-mapping.org/pooled-cpm-beta-approx.png]]
   :END:
 
@@ -943,127 +1028,550 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[92]:
+  # Out[18]:
   [[file:figure/qtl-mapping.org/pooled-qtl-qq.png]]
   :END:
 
   Take QTLs with \(\mathrm{FDR} < 0.1\).
 
-  #+BEGIN_SRC ipython :noweb no-export
-    <<r-wrappers>>
+  #+BEGIN_SRC ipython
     pooled_qtls['fdr_pass'] = bh(pooled_qtls['p_beta']) < .1
     pooled_qtls['fdr_pass'].sum()
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[93]:
-  : 140
+  # Out[19]:
+  : 138
   :END:
 
-* Replicate bulk eQTLs in the single cell data
+** Call mean-QTLs
 
-  Read the reported bulk eQTLs.
+   Throw out individuals with fewer than 50 cells.
 
-  #+BEGIN_SRC ipython
-    bulk_qtls = pd.read_table('/scratch/midway2/aksarkar/singlecell/reproduce-yang/bulk-qtls.txt.gz')
-  #+END_SRC
+   #+BEGIN_SRC ipython
+     annotations = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/scqtl-annotation.txt')
+     keep_samples = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/quality-single-cells.txt', index_col=0, header=None)
+     keep_genes = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/genes-pass-filter.txt', index_col=0, header=None)
+     annotations = annotations.loc[keep_samples.values.ravel()]
+     keep_inds = annotations.groupby('chip_id').apply(lambda x: len(x) >= 50)
+   #+END_SRC
 
-  #+RESULTS:
-  :RESULTS:
-  # Out[138]:
-  :END:
+   #+RESULTS:
+   :RESULTS:
+   # Out[44]:
+   :END:
 
-  Read the estimated means. Exclude individuals with fewer than 50 cells.
+   Compute sample means.
 
-  #+NAME: read-log-mean
-  #+BEGIN_SRC ipython :async t
+   #+BEGIN_SRC ipython
+     mean = pd.concat(
+       [(chunk
+         .filter(items=keep_genes[keep_genes.values].index, axis='index')
+         # Important: this can't be done by filter because sample names are
+         # different in the QC file
+         .loc[:,keep_samples.values.ravel()]
+         .groupby(annotation[keep_samples.values.ravel()]['chip_id'].values, axis=1)
+         .agg(np.mean))
+        for chunk in
+        pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/scqtl-counts.txt.gz',
+                      chunksize=1000, index_col=0)])
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[45]:
+   :END:
+
+   Normalize the mean matrix.
+
+   #+BEGIN_SRC ipython
+     mean = mean.loc[:,keep_inds].transform(lambda x: (x - x.mean()) / x.std(), axis=1).apply(qqnorm, axis=0)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[64]:
+   :END:
+
+   Write out the [[https://qtltools.github.io/qtltools/pages/input_files.html][phenotype file]] for ~qtltools~. Hold out even chromosomes while
+   optimizing the power to detect eQTLs.
+
+   #+BEGIN_SRC ipython
+     write_pheno_file(
+       mean,
+       gene_info,
+       output_file='/scratch/midway2/aksarkar/singlecell/scqtl-mapping/sample-mean.bed',
+       holdout=True)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[65]:
+   :END:
+
+   Index the phenotype file.
+
+   #+CALL: tabix(input="sample-mean.bed") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
+
+   #+RESULTS:
+   : Submitted batch job 44422720
+
+   Run ~qtltools~.
+
+   #+CALL: qtltools(pheno="sample-mean", geno="/scratch/midway2/aksarkar/singlecell/reproduce-yang/yri-dosages.vcf.gz", op="--window 100000 --permute 10000") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
+
+   #+RESULTS:
+   : Submitted batch job 44422722
+
+   Read the output.
+
+   #+BEGIN_SRC ipython
+     sample_mean_qtls = read_qtltools_output('scqtl-mapping/sample-mean')
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[66]:
+   :END:
+
+   Check the beta approximation to the permutation p-values.
+
+   #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/sample-mean-qtl-beta-approx.png
+     plot_approx_permutation(sample_mean_qtls)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[67]:
+   [[file:figure/qtl-mapping.org/sample-mean-qtl-beta-approx.png]]
+   :END:
+
+   Plot a QQ plot of the permutation p-values.
+
+   #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/sample-mean-qtl-qq.png
+     qqplot(sample_mean_qtls)
+   #+end_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[68]:
+   [[file:figure/qtl-mapping.org/sample-mean-qtl-qq.png]]
+   :END:
+
+   Take QTLs at FDR 10%.
+
+   #+BEGIN_SRC ipython
+    sample_mean_qtls['fdr_pass'] = bh(sample_mean_qtls['p_beta']) < .1
+    sample_mean_qtls['fdr_pass'].sum()
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[69]:
+   : 74
+   :END:
+
+** Call variance-QTLs
+
+   Compute sample variances.
+
+   #+BEGIN_SRC ipython
+     var = pd.concat(
+       [(chunk
+         .filter(items=keep_genes[keep_genes.values].index, axis='index')
+         # Important: this can't be done by filter because sample names are
+         # different in the QC file
+         .loc[:,keep_samples.values.ravel()]
+         .groupby(annotation[keep_samples.values.ravel()]['chip_id'].values, axis=1)
+         .agg(np.var))
+        for chunk in
+        pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/scqtl-counts.txt.gz',
+                      chunksize=1000, index_col=0)])
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[52]:
+   :END:
+
+   Normalize the variance matrix.
+
+   #+BEGIN_SRC ipython
+     var = var.loc[:,keep_inds].transform(lambda x: (x - x.mean()) / x.std(), axis=1).apply(qqnorm, axis=0)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[72]:
+   :END:
+
+   Write out the [[https://qtltools.github.io/qtltools/pages/input_files.html][phenotype file]] for ~qtltools~. Hold out even chromosomes while
+   optimizing the power to detect eQTLs.
+
+   #+BEGIN_SRC ipython
+     write_pheno_file(var, gene_info, '/scratch/midway2/aksarkar/singlecell/scqtl-mapping/var.bed', holdout=True)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[73]:
+   :END:
+
+   Index the phenotype file.
+
+   #+CALL: tabix(input="var.bed") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
+
+   #+RESULTS:
+   : Submitted batch job 44422830
+
+   Run ~qtltools~.
+
+   #+CALL: qtltools(pheno="var", geno="/scratch/midway2/aksarkar/singlecell/reproduce-yang/yri-dosages.vcf.gz", op="--window 100000 --permute 10000") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
+
+   #+RESULTS:
+   : Submitted batch job 44422831
+
+   Read the output.
+
+   #+BEGIN_SRC ipython
+     var_qtls = read_qtltools_output('scqtl-mapping/var')
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[74]:
+   :END:
+
+   Check the beta approximation to the permutation p-values.
+
+   #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/sample-var-qtl-beta-approx.png
+     plot_approx_permutation(var_qtls)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[136]:
+   [[file:figure/qtl-mapping.org/sample-var-qtl-beta-approx.png]]
+   :END:
+
+   Plot a QQ plot of the permutation p-values.
+
+   #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/sample-var-qtl-qq.png
+     qqplot(var_qtls)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[137]:
+   [[file:figure/qtl-mapping.org/sample-var-qtl-qq.png]]
+   :END:
+
+   Take QTLs at FDR 10%.
+
+   #+BEGIN_SRC ipython
+     var_qtls['fdr_pass'] = bh(var_qtls['p_beta']) < .1
+     var_qtls['fdr_pass'].sum()
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[78]:
+   : 41
+   :END:
+
+   Write out the QTLs.
+
+   #+BEGIN_SRC ipython
+     with sqlite3.connect('/project2/mstephens/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
+       X, Y = extract_qtl_gene_pair(var_qtls[var_qtls['fdr_pass']], var, dosages='/scratch/midway2/aksarkar/singlecell/reproduce-yang/YRI_SNPs_2_IPSC.txt.gen.gz')
+       X.reset_index().melt(id_vars='gene', var_name='ind').to_sql('var_qtl_geno', conn, index=False, if_exists='replace')
+       conn.execute('create index ix_var_qtl_geno on var_qtl_geno(gene, ind);')
+       Y.reset_index().melt(id_vars='gene', var_name='ind').to_sql('var', conn, index=False, if_exists='replace')
+       conn.execute('create index ix_var on var(gene, ind);')
+       var_qtls[['gene', 'id', 'beta', 'p_beta', 'fdr_pass']].to_sql('var_qtls', conn, index=False, if_exists='replace')
+       conn.execute('create index ix_var_qtls on var_qtls(gene);')
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[51]:
+   :END:
+
+** Call CV-QTLs
+
+   Compute coefficient of variation from sample moments.
+
+   #+BEGIN_SRC ipython
+     cv = pd.concat(
+       [(chunk
+         .filter(items=keep_genes[keep_genes.values].index, axis='index')
+         # Important: this can't be done by filter because sample names are
+         # different in the QC file
+         .loc[:,keep_samples.values.ravel()]
+         .groupby(annotation[keep_samples.values.ravel()]['chip_id'].values, axis=1)
+         .agg(lambda x: np.std(x, axis=1) / (np.mean(x, axis=1) + 1e-8)))
+        for chunk in
+        pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/scqtl-counts.txt.gz',
+                      chunksize=1000, index_col=0)])
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[98]:
+   :END:
+
+   Normalize the CV matrix.
+
+   #+BEGIN_SRC ipython
+    cv = cv.loc[:,keep_inds].transform(lambda x: (x - x.mean()) / x.std(), axis=1).apply(qqnorm, axis=0)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[103]:
+   :END:
+
+   Write out the [[https://qtltools.github.io/qtltools/pages/input_files.html][phenotype file]] for ~qtltools~. Hold out even chromosomes while
+   optimizing the power to detect eQTLs.
+
+   #+BEGIN_SRC ipython
+    write_pheno_file(cv, gene_info, '/scratch/midway2/aksarkar/singlecell/scqtl-mapping/cv.bed', holdout=True)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[104]:
+   :END:
+
+   Index the phenotype file.
+
+   #+CALL: tabix(input="cv.bed") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
+
+   #+RESULTS:
+   : Submitted batch job 44424210
+
+   Run ~qtltools~.
+
+   #+CALL: qtltools(pheno="cv", geno="/scratch/midway2/aksarkar/singlecell/reproduce-yang/yri-dosages.vcf.gz", op="--window 100000 --permute 10000") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
+
+   #+RESULTS:
+   : Submitted batch job 44424211
+
+   Read the output.
+
+   #+BEGIN_SRC ipython
+    cv_qtls = read_qtltools_output('scqtl-mapping/cv')
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[105]:
+   :END:
+
+   Check the beta approximation to the permutation p-values.
+
+   #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/sample-cv-qtl-beta-approx.png
+     plot_approx_permutation(cv_qtls)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[138]:
+   [[file:figure/qtl-mapping.org/sample-cv-qtl-beta-approx.png]]
+   :END:
+
+   Plot a QQ plot of the permutation p-values.
+
+   #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/sample-cv-qtl-qq.png
+    qqplot(cv_qtls)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[139]:
+   [[file:figure/qtl-mapping.org/sample-cv-qtl-qq.png]]
+   :END:
+
+   Take QTLs at FDR 10%.
+
+   #+BEGIN_SRC ipython
+    cv_qtls['fdr_pass'] = bh(cv_qtls['p_beta']) < .1
+    cv_qtls['fdr_pass'].sum()
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[108]:
+   : 0
+   :END:
+
+   #+BEGIN_SRC ipython
     with sqlite3.connect('/project2/mstephens/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
-      log_mean = (pd.read_sql(
-        """select gene, ind, case when llr < 1 then nb_log_mean else zinb2_log_mean end
-        as log_mean from params where (select count(distinct sample) from
-        annotation where annotation.chip_id == ind) >= 50;""", conn)
-                  .pivot(index='gene', columns='ind', values='log_mean'))
-  #+END_SRC
+      X, Y = extract_qtl_gene_pair(cv_qtls[cv_qtls['fdr_pass']], var, dosages='/scratch/midway2/aksarkar/singlecell/reproduce-yang/YRI_SNPs_2_IPSC.txt.gen.gz')
+      X.reset_index().melt(id_vars='gene', var_name='ind').to_sql('cv_qtl_geno', conn, index=False, if_exists='replace')
+      conn.execute('create index ix_cv_qtl_geno on cv_qtl_geno(gene, ind);')
+      Y.reset_index().melt(id_vars='gene', var_name='ind').to_sql('var', conn, index=False, if_exists='replace')
+      conn.execute('create index ix_var on var(gene, ind);')
+      cv_qtls[['gene', 'id', 'beta', 'p_beta', 'fdr_pass']].to_sql('cv_qtls', conn, index=False, if_exists='replace')
+      conn.execute('create index ix_cv_qtls on cv_qtls(gene);')
+   #+END_SRC
 
-  #+RESULTS:
-  :RESULTS:
-  :END:
+   #+RESULTS:
+   :RESULTS:
+   # Out[85]:
+   :END:
 
-  Test each bulk QTL-gene pair in the single cell data. *Important: use imputed
-  dosage data.*
+** Call dispersion-QTLs
 
-  #+BEGIN_SRC ipython :noweb no-export
-    <<replication-tests-def>>
-    X, Y = extract_qtl_gene_pair(bulk_qtls[bulk_qtls['fdr_pass']], log_mean, dosages='/scratch/midway2/aksarkar/singlecell/reproduce-yang/YRI_SNPs_2_IPSC.txt.gen.gz')
-    bulk_sc_replication = replication_tests(X, Y)
-    bulk_sc_replication = bulk_qtls.merge(
-      bulk_sc_replication,
-      on='gene',
-      suffixes=['_bulk', '_sc'])[['gene', 'id', 'beta_bulk', 'p_bulk', 'beta_sc', 'p_sc']]
-  #+END_SRC
+   Fisher's index of dispersion is defined as \(V[x] / E[x]\). The Fano factor
+   is Fisher's index of dispersion over a fixed window (in our case, the total
+   number of reads).
 
-  #+RESULTS:
-  :RESULTS:
-  # Out[218]:
-  :END:
+   #+BEGIN_SRC ipython
+     fano = pd.concat(
+       [(chunk
+         .filter(items=keep_genes[keep_genes.values].index, axis='index')
+         # Important: this can't be done by filter because sample names are
+         # different in the QC file
+         .loc[:,keep_samples.values.ravel()]
+         .groupby(annotation[keep_samples.values.ravel()]['chip_id'].values, axis=1)
+         .agg(lambda x: np.var(x, axis=1) / (np.mean(x, axis=1) + 1e-8)))
+        for chunk in
+        pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/scqtl-counts.txt.gz',
+                      chunksize=1000, index_col=0)])
+   #+END_SRC
 
-  Define replication to be nominally significant (\(p < 0.05\)) and having the
-  same effect direction.
+   #+RESULTS:
+   :RESULTS:
+   # Out[112]:
+   :END:
 
-  #+BEGIN_SRC ipython
-    bulk_sc_replication['replicated'] = bulk_sc_replication.apply(lambda x: x['p_sc'] < 0.05 and x['beta_bulk'] * x['beta_sc'] > 0, axis=1)
-    bulk_sc_replication['replicated'].sum() / bulk_sc_replication.shape[0]
-  #+END_SRC
+   Normalize the variance matrix analagous to the bulk data.
 
-  #+RESULTS:
-  :RESULTS:
-  # Out[220]:
-  : 0.8557588805166846
-  :END:
+   #+BEGIN_SRC ipython
+     fano = fano.loc[:,keep_inds].transform(lambda x: (x - x.mean()) / x.std(), axis=1).apply(qqnorm, axis=0)
+   #+END_SRC
 
-  Write the data to the database.
+   #+RESULTS:
+   :RESULTS:
+   # Out[114]:
+   :END:
 
-  #+BEGIN_SRC ipython
+   Write out the [[https://qtltools.github.io/qtltools/pages/input_files.html][phenotype file]] for ~qtltools~. Hold out even chromosomes while
+   optimizing the power to detect eQTLs.
+
+   #+BEGIN_SRC ipython
+     write_pheno_file(fano, gene_info, '/scratch/midway2/aksarkar/singlecell/scqtl-mapping/fano.bed', holdout=True)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[115]:
+   :END:
+
+   Index the phenotype file.
+
+   #+CALL: tabix(input="fano.bed") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
+
+   #+RESULTS:
+   : Submitted batch job 44424317
+
+   Run ~qtltools~.
+
+   #+CALL: qtltools(pheno="fano", geno="/scratch/midway2/aksarkar/singlecell/reproduce-yang/yri-dosages.vcf.gz", op="--window 100000 --permute 10000") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
+
+   #+RESULTS:
+   : Submitted batch job 44424318
+
+   Read the output.
+
+   #+BEGIN_SRC ipython
+     fano_qtls = read_qtltools_output('scqtl-mapping/fano')
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[116]:
+   :END:
+
+   Check the beta approximation to the permutation p-values.
+
+   #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/sample-fano-qtl-beta-approx.png
+     plot_approx_permutation(fano_qtls)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[140]:
+   [[file:figure/qtl-mapping.org/sample-fano-qtl-beta-approx.png]]
+   :END:
+
+   Plot a QQ plot of the permutation p-values.
+
+   #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/sample-fano-qtl-qq.png
+     qqplot(fano_qtls)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[141]:
+   [[file:figure/qtl-mapping.org/sample-fano-qtl-qq.png]]
+   :END:
+
+   Take QTLs at FDR 10%.
+
+   #+BEGIN_SRC ipython
+     fano_qtls['fdr_pass'] = bh(fano_qtls['p_beta']) < .1
+     fano_qtls['fdr_pass'].sum()
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[119]:
+   : 41
+   :END:
+
+   Write out the QTLs.
+
+   #+BEGIN_SRC ipython
     with sqlite3.connect('/project2/mstephens/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
-      X.reset_index().melt(id_vars='gene', var_name='ind').to_sql('genotype', con=conn, index=False, if_exists='replace')
-      conn.execute('create index ix_genotype on genotype(gene, ind);')
-      (bulk_sc_replication[['gene', 'id', 'beta_bulk', 'p_bulk', 'beta_sc', 'p_sc', 'replicated']]
-       .to_sql('qtls', con=conn, index=False, if_exists='replace'))
-      conn.execute('create index ix_qtls on qtls(gene);')
-  #+END_SRC
+      X, Y = extract_qtl_gene_pair(fano_qtls[fano_qtls['fdr_pass']], fano, dosages='/scratch/midway2/aksarkar/singlecell/reproduce-yang/YRI_SNPs_2_IPSC.txt.gen.gz')
+      X.reset_index().melt(id_vars='gene', var_name='ind').to_sql('fano_qtl_geno', conn, index=False, if_exists='replace')
+      conn.execute('create index ix_fano_qtl_geno on fano_qtl_geno(gene, ind);')
+      Y.reset_index().melt(id_vars='gene', var_name='ind').to_sql('fano', conn, index=False, if_exists='replace')
+      conn.execute('create index ix_fano on fano(gene, ind);')
+      fano_qtls[['gene', 'id', 'beta', 'p_beta', 'fdr_pass']].to_sql('fano_qtls', conn, index=False, if_exists='replace')
+      conn.execute('create index ix_fano_qtls on fano_qtls(gene);')
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[75]:
+   :END:
+
+* Analysis using ZINB
+** Call \mu-QTLs
+
+  Read the estimated parameters \(\log \mu_{ik}\). Exclude individuals with
+  fewer than 50 cells.
+
+  #+CALL: read-log-mu()
 
   #+RESULTS:
   :RESULTS:
-  # Out[223]:
+  # Out[125]:
   :END:
-
-* Call mean-QTLs in the single cell data
-
-  For each individual, for each gene, take either the negative binomial or
-  zero-inflated negative binomial estimate, depending on which maximized the
-  likelihood of the data.
-
-  #+BEGIN_SRC ipython
-    with sqlite3.connect('/project2/mstephens/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
-      log_mean = (pd.read_sql(
-        """select gene, ind, case when llr < 1 then nb_log_mean else zinb2_log_mean end
-        as log_mean from params where ind in 
-        (select chip_id from annotation group by chip_id 
-        having count(distinct sample) >= 50);""", conn)
-                  .pivot(index='gene', columns='ind', values='log_mean'))
-  #+END_SRC
 
   Normalize the mean matrix analagous to the bulk data.
 
-  #+BEGIN_SRC ipython :noweb no-export
-    <<r-wrappers>>
+  #+BEGIN_SRC ipython
     log_mean = log_mean.transform(lambda x: (x - x.mean()) / x.std(), axis=1).apply(qqnorm, axis=0)
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[143]:
+  # Out[126]:
   :END:
 
   Compute principal components of the mean matrix.
@@ -1076,21 +1584,19 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[146]:
+  # Out[127]:
   :END:
 
   Write out the [[https://qtltools.github.io/qtltools/pages/input_files.html][phenotype file]] for ~qtltools~. Hold out even chromosomes while
   optimizing the power to detect eQTLs.
 
-  #+BEGIN_SRC ipython :noweb no-export
-    <<get-gene-info>>
-    <<write-pheno-def>>
+  #+BEGIN_SRC ipython
     write_pheno_file(log_mean, gene_info, '/scratch/midway2/aksarkar/singlecell/scqtl-mapping/log-mean.bed', holdout=True)
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[147]:
+  # Out[128]:
   :END:
 
   Index the phenotype file.
@@ -1098,55 +1604,48 @@
   #+CALL: tabix(input="log-mean.bed") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
 
   #+RESULTS:
-  : Submitted batch job 44347067
+  : Submitted batch job 44424491
 
   Run ~qtltools~.
 
-  #+CALL: qtltools(pheno="log-mean", geno="/scratch/midway2/aksarkar/singlecell/reproduce-yang/yri-dosages.vcf.gz", op="--window 100000 --permute 10000") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
+  #+CALL: qtltools(pheno="log-mean", geno="/scratch/midway2/aksarkar/singlecell/reproduce-yang/yri-dosages.vcf.gz", op="--cov log-mean-pcs.txt --window 100000 --permute 10000") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
 
   #+RESULTS:
-  : Submitted batch job 44347070
+  : Submitted batch job 44424493
 
   Read the output.
 
-  #+BEGIN_SRC ipython :noweb no-export
-    <<read-qtltools-def>>
+  #+BEGIN_SRC ipython
     log_mean_qtls = read_qtltools_output('scqtl-mapping/log-mean')
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[148]:
+  # Out[129]:
   :END:
 
   Check the beta approximation to the permutation p-values.
 
-  #+BEGIN_SRC ipython :noweb no-export :ipyfile figure/qtl-mapping.org/mean-qtl-beta-approx.png
-    <<plot-approx-perm-def>>
+  #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/mu-qtl-beta-approx.png
     plot_approx_permutation(log_mean_qtls)
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[151]:
-  [[file:figure/qtl-mapping.org/mean-qtl-beta-approx.png]]
+  # Out[142]:
+  [[file:figure/qtl-mapping.org/mu-qtl-beta-approx.png]]
   :END:
 
   Plot a QQ plot of the permutation p-values.
 
-  #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/mean-qtl-qq.png
-    plt.clf()
-    plt.gcf().set_size_inches(6, 6)
-    plt.scatter(-np.log10(np.arange(1, 1 + log_mean_qtls.shape[0]) / log_mean_qtls.shape[0]), -np.log10(log_mean_qtls['p_beta']), s=1, c='k')
-    plt.plot([0, np.log10(log_mean_qtls.shape[0])], [0, np.log10(log_mean_qtls.shape[0])], c='r', ls='--')
-    plt.xlabel('Expected $-\log_{10}(p)$')
-    _ = plt.ylabel('Observed $-\log_{10}(p)$')
+  #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/mu-qtl-qq.png
+    qqplot(log_mean_qtls)
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[152]:
-  [[file:figure/qtl-mapping.org/mean-qtl-qq.png]]
+  # Out[143]:
+  [[file:figure/qtl-mapping.org/mu-qtl-qq.png]]
   :END:
 
   Take QTLs at FDR 10%.
@@ -1158,14 +1657,155 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[153]:
-  : 110
+  # Out[132]:
+  : 108
   :END:
 
-  Write out the QTLs.
+** Call \phi-QTLs
+
+  Read the estimated parameters. Exclude individuals with fewer than 50 cells.
 
   #+BEGIN_SRC ipython
-    log_mean_qtls.to_csv('/scratch/midway2/aksarkar/singlecell/scqtl-mapping/log-mean-qtls.txt.gz', compression='gzip', index=False, sep='\t')
+    with sqlite3.connect('/project2/mstephens/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
+      log_phi = (pd.read_sql(
+        """select gene, ind, log_phi from params where ind in 
+        (select chip_id from annotation group by chip_id 
+        having count(distinct sample) >= 50);""", conn)
+                 .pivot(index='gene', columns='ind', values='log_phi'))
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[144]:
+  :END:
+
+  Normalize the dispersion matrix.
+
+  #+BEGIN_SRC ipython
+    log_phi = log_phi.apply(qqnorm, axis=1)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[145]:
+  :END:
+
+  Write out the phenotype file.
+
+  #+BEGIN_SRC ipython
+    write_pheno_file(log_phi, gene_info, holdout=True, output_file='/scratch/midway2/aksarkar/singlecell/scqtl-mapping/phi.bed')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[146]:
+  :END:
+
+  Index the phenotype file.
+
+  #+CALL: tabix(input="phi.bed") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
+
+  #+RESULTS:
+  : Submitted batch job 44424678
+
+  Run ~qtltools~.
+
+  #+CALL: qtltools(pheno="phi", geno="/scratch/midway2/aksarkar/singlecell/reproduce-yang/yri-dosages.vcf.gz", op="--window 100000 --permute 10000") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
+
+  #+RESULTS:
+  : Submitted batch job 44424685
+
+  Read the output.
+
+  #+BEGIN_SRC ipython
+    log_phi_qtls = read_qtltools_output('scqtl-mapping/phi')
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[147]:
+  :END:
+
+  Check the beta approximation to the permutation p-values.
+
+  #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/phi-qtl-beta-approx.png
+    plot_approx_permutation(log_phi_qtls)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[148]:
+  [[file:figure/qtl-mapping.org/phi-qtl-beta-approx.png]]
+  :END:
+
+  Plot a QQ plot of the permutation p-values.
+
+  #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/phi-qtl-qq.png
+    qqplot(log_phi_qtls)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[149]:
+  [[file:figure/qtl-mapping.org/phi-qtl-qq.png]]
+  :END:
+
+  Take QTLs at FDR 10%.
+
+  #+BEGIN_SRC ipython
+    log_phi_qtls['fdr_pass'] = bh(log_phi_qtls['p_beta']) < 0.1
+    log_phi_qtls['fdr_pass'].sum()
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[150]:
+  : 0
+  :END:
+
+** Call mean-QTLs
+
+   We have \(r_{ijk} \sim g_{ijk}(\cdot)\), where \(g\) is the ZINB density [[file:zinb.org][as
+   previously defined]].
+
+   Fixing individual \(i\), gene \(k\), we can estimate a
+   zero-inflation--corrected mean as:
+
+   \[ E[r_{ijk}] = R_{ijk} \mu_{ik} \]
+
+   Read the estimated corrected means.
+
+   #+BEGIN_SRC ipython
+     with sqlite3.connect('/project2/mstephens/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
+       mean = (pd.read_sql(
+         """select gene, ind, mean from params where ind in 
+         (select chip_id from annotation group by chip_id 
+         having count(distinct sample) >= 50);""", conn)
+                  .pivot(index='gene', columns='ind', values='mean'))
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[18]:
+   :END:
+
+  Normalize the mean matrix.
+
+  #+BEGIN_SRC ipython
+    mean = mean.transform(lambda x: (x - x.mean()) / x.std(), axis=1).apply(qqnorm, axis=0)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[153]:
+  :END:
+
+  Compute principal components of the mean matrix.
+
+  #+BEGIN_SRC ipython
+    covars = pd.DataFrame(skd.PCA(n_components=10).fit(mean).components_, columns=mean.columns)
+    covars.index.name = 'id'
+    covars.to_csv('/scratch/midway2/aksarkar/singlecell/scqtl-mapping/mean-pcs.txt', sep='\t')
   #+END_SRC
 
   #+RESULTS:
@@ -1173,551 +1813,397 @@
   # Out[154]:
   :END:
 
-  Test each mean QTL-gene pair in the bulk data.
-
-  #+BEGIN_SRC ipython
-    bulk_log_cpm = (pd.read_table('/project2/gilad/singlecell-qtl/bulk/counts_RNAseq_iPSC.txt', index_col=0)
-                    .rename(index=lambda x: x.split('.')[0])
-                    .rename(columns=lambda x: 'NA{}'.format(x))
-                    .transform(lambda x: np.log(x / x.sum()), axis=0))
-  #+END_SRC
-
-* Call dispersion-QTLs
-
-  Read the estimated parameters. Exclude individuals with fewer than 50 cells.
-
-  #+BEGIN_SRC ipython
-    with sqlite3.connect('/project2/mstephens/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
-      log_disp = (pd.read_sql(
-        """select gene, ind, case when llr < 1 then nb_log_disp else zinb2_log_disp end
-        as log_disp from params where ind in 
-        (select chip_id from annotation group by chip_id 
-        having count(distinct sample) >= 50);""", conn)
-                  .pivot(index='gene', columns='ind', values='log_disp'))
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[32]:
-  :END:
-
-  Normalize the dispersion matrix.
-
-  #+BEGIN_SRC ipython
-    log_disp = log_disp.apply(qqnorm, axis=1)
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[33]:
-  :END:
-
-  Write out the phenotype file.
-
-  #+BEGIN_SRC ipython :noweb no-export
-    <<get-gene-info>>
-    <<write-pheno-def>>
-    write_pheno_file(log_disp, gene_info, holdout=True, output_file='/scratch/midway2/aksarkar/singlecell/scqtl-mapping/disp.bed')
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[34]:
-  :END:
-
-  Index the phenotype file.
-
-  #+CALL: tabix(input="disp.bed") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
-
-  #+RESULTS:
-  : Submitted batch job 44392072
-
-  Run ~qtltools~.
-
-  #+CALL: qtltools(pheno="disp", geno="/scratch/midway2/aksarkar/singlecell/reproduce-yang/yri-dosages.vcf.gz", op="--window 100000 --permute 10000") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
-
-  #+RESULTS:
-  : Submitted batch job 44392077
-
-  Read the output.
-
-  #+BEGIN_SRC ipython :noweb no-export
-    <<read-qtltools-def>>
-    log_disp_qtls = read_qtltools_output('scqtl-mapping/disp')
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[35]:
-  :END:
-
-  Check the beta approximation to the permutation p-values.
-
-  #+BEGIN_SRC ipython :noweb no-export :ipyfile figure/qtl-mapping.org/disp-qtl-beta-approx.png
-    <<plot-approx-perm-def>>
-    plot_approx_permutation(log_disp_qtls)
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[36]:
-  [[file:figure/qtl-mapping.org/disp-qtl-beta-approx.png]]
-  :END:
-
-  Plot a QQ plot of the permutation p-values.
-
-  #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/disp-qtl-qq.png
-    plt.clf()
-    plt.gcf().set_size_inches(6, 6)
-    plt.scatter(-np.log10(np.arange(1, 1 + log_disp_qtls.shape[0]) / log_disp_qtls.shape[0]), -np.log10(log_disp_qtls['p_beta']), s=1, c='k')
-    plt.plot([0, np.log10(log_disp_qtls.shape[0])], [0, np.log10(log_disp_qtls.shape[0])], c='r', ls='--')
-    plt.xlabel('Expected $-\log_{10}(p)$')
-    _ = plt.ylabel('Observed $-\log_{10}(p)$')
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[37]:
-  [[file:figure/qtl-mapping.org/disp-qtl-qq.png]]
-  :END:
-
-  Take QTLs at FDR 10%.
-
-  #+BEGIN_SRC ipython :noweb no-export
-    <<r-wrappers>>
-    log_disp_qtls['fdr_pass'] = bh(log_disp_qtls['p_beta']) < 0.1
-    log_disp_qtls['fdr_pass'].sum()
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[38]:
-  : 0
-  :END:
-* Call variance-QTLs from sample variances
-
-  #+BEGIN_SRC ipython
-    umi = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/scqtl-counts.txt.gz', index_col=0)
-    annotations = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/scqtl-annotation.txt')
-    keep_samples = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/quality-single-cells.txt', index_col=0, header=None)
-    keep_genes = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/genes-pass-filter.txt', index_col=0, header=None)
-    umi = umi.loc[keep_genes.values.ravel(),keep_samples.values.ravel()]
-    annotations = annotations.loc[keep_samples.values.ravel()]
-    keep_inds = annotations.groupby('chip_id').apply(lambda x: len(x) >= 50)
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[2]:
-  :END:
-
-  #+BEGIN_SRC ipython
-    var = umi.groupby(annotations['chip_id'].values, axis=1).agg(np.var)
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[7]:
-  :END:
-
-  Normalize the variance matrix analagous to the bulk data.
-
-  #+BEGIN_SRC ipython :noweb no-export
-    <<r-wrappers>>
-    var = var.loc[:,keep_inds].transform(lambda x: (x - x.mean()) / x.std(), axis=1).apply(qqnorm, axis=0)
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[14]:
-  :END:
-
   Write out the [[https://qtltools.github.io/qtltools/pages/input_files.html][phenotype file]] for ~qtltools~. Hold out even chromosomes while
   optimizing the power to detect eQTLs.
 
-  #+BEGIN_SRC ipython :noweb no-export
-    <<get-gene-info>>
-    <<write-pheno-def>>
-    write_pheno_file(var, gene_info, '/scratch/midway2/aksarkar/singlecell/scqtl-mapping/var.bed', holdout=True)
+  #+BEGIN_SRC ipython
+    write_pheno_file(mean, gene_info, '/scratch/midway2/aksarkar/singlecell/scqtl-mapping/mean.bed', holdout=True)
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[15]:
+  # Out[155]:
   :END:
 
   Index the phenotype file.
 
-  #+CALL: tabix(input="var.bed") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
+  #+CALL: tabix(input="mean.bed") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
 
   #+RESULTS:
-  : Submitted batch job 44400373
+  : Submitted batch job 44424943
 
   Run ~qtltools~.
 
-  #+CALL: qtltools(pheno="var", geno="/scratch/midway2/aksarkar/singlecell/reproduce-yang/yri-dosages.vcf.gz", op="--window 100000 --permute 10000") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
+  #+CALL: qtltools(pheno="mean", geno="/scratch/midway2/aksarkar/singlecell/reproduce-yang/yri-dosages.vcf.gz", op="--cov mean-pcs.txt --window 100000 --permute 10000") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
 
   #+RESULTS:
-  : Submitted batch job 44400375
+  : Submitted batch job 44424944
 
   Read the output.
 
-  #+BEGIN_SRC ipython :noweb no-export
-    <<read-qtltools-def>>
-    var_qtls = read_qtltools_output('scqtl-mapping/var')
+  #+BEGIN_SRC ipython
+    mean_qtls = read_qtltools_output('scqtl-mapping/mean')
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[38]:
+  # Out[156]:
   :END:
 
   Check the beta approximation to the permutation p-values.
 
-  #+BEGIN_SRC ipython :noweb no-export :ipyfile figure/qtl-mapping.org/var-qtl-beta-approx.png
-    <<plot-approx-perm-def>>
-    plot_approx_permutation(var_qtls)
+  #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/mean-qtl-beta-approx.png
+    plot_approx_permutation(mean_qtls)
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[19]:
-  [[file:figure/qtl-mapping.org/var-qtl-beta-approx.png]]
+  # Out[157]:
+  [[file:figure/qtl-mapping.org/mean-qtl-beta-approx.png]]
   :END:
 
   Plot a QQ plot of the permutation p-values.
 
-  #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/var-qtl-qq.png
-    plt.clf()
-    plt.gcf().set_size_inches(6, 6)
-    plt.scatter(-np.log10(np.arange(1, 1 + var_qtls.shape[0]) / var_qtls.shape[0]), -np.log10(var_qtls['p_beta']), s=1, c='k')
-    plt.plot([0, np.log10(var_qtls.shape[0])], [0, np.log10(var_qtls.shape[0])], c='r', ls='--')
-    plt.xlabel('Expected $-\log_{10}(p)$')
-    _ = plt.ylabel('Observed $-\log_{10}(p)$')
+  #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/mean-qtl-qq.png
+    qqplot(mean_qtls)
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[20]:
-  [[file:figure/qtl-mapping.org/var-qtl-qq.png]]
+  # Out[158]:
+  [[file:figure/qtl-mapping.org/mean-qtl-qq.png]]
   :END:
 
   Take QTLs at FDR 10%.
 
   #+BEGIN_SRC ipython
-    var_qtls['fdr_pass'] = bh(var_qtls['p_beta']) < .1
-    var_qtls['fdr_pass'].sum()
+    mean_qtls['fdr_pass'] = bh(mean_qtls['p_beta']) < .1
+    mean_qtls['fdr_pass'].sum()
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[41]:
-  : 43
+  # Out[159]:
+  : 101
   :END:
 
-  Write out the QTLs.
-
-  #+CALL: replication-tests-def()
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[34]:
-  :END:
-
-  #+BEGIN_SRC ipython
-    with sqlite3.connect('/project2/mstephens/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
-      X, Y = extract_qtl_gene_pair(var_qtls[var_qtls['fdr_pass']], var, dosages='/scratch/midway2/aksarkar/singlecell/reproduce-yang/YRI_SNPs_2_IPSC.txt.gen.gz')
-      X.reset_index().melt(id_vars='gene', var_name='ind').to_sql('var_qtl_geno', conn, index=False, if_exists='replace')
-      conn.execute('create index ix_var_qtl_geno on var_qtl_geno(gene, ind);')
-      Y.reset_index().melt(id_vars='gene', var_name='ind').to_sql('var', conn, index=False, if_exists='replace')
-      conn.execute('create index ix_var on var(gene, ind);')
-      var_qtls[['gene', 'id', 'beta', 'p_beta', 'fdr_pass']].to_sql('var_qtls', conn, index=False, if_exists='replace')
-      conn.execute('create index ix_var_qtls on var_qtls(gene);')
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[51]:
-  :END:
-
-* Call CV-QTLs from sample moments
-
-  #+BEGIN_SRC ipython
-    umi = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/scqtl-counts.txt.gz', index_col=0)
-    annotations = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/scqtl-annotation.txt')
-    keep_samples = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/quality-single-cells.txt', index_col=0, header=None)
-    keep_genes = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/genes-pass-filter.txt', index_col=0, header=None)
-    umi = umi.loc[keep_genes.values.ravel(),keep_samples.values.ravel()]
-    annotations = annotations.loc[keep_samples.values.ravel()]
-    keep_inds = annotations.groupby('chip_id').apply(lambda x: len(x) >= 50)
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[2]:
-  :END:
-
-  #+BEGIN_SRC ipython
-    cv = umi.groupby(annotations['chip_id'].values, axis=1).agg(lambda x: x.std(axis=1) / x.mean(axis=1)).dropna()
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[76]:
-  :END:
-
-  Normalize the variance matrix analagous to the bulk data.
-
-  #+BEGIN_SRC ipython :noweb no-export
-    <<r-wrappers>>
-    cv = var.loc[:,keep_inds].transform(lambda x: (x - x.mean()) / x.std(), axis=1).apply(qqnorm, axis=0)
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[77]:
-  :END:
-
-  Write out the [[https://qtltools.github.io/qtltools/pages/input_files.html][phenotype file]] for ~qtltools~. Hold out even chromosomes while
-  optimizing the power to detect eQTLs.
-
-  #+BEGIN_SRC ipython :noweb no-export
-    <<get-gene-info>>
-    <<write-pheno-def>>
-    write_pheno_file(cv, gene_info, '/scratch/midway2/aksarkar/singlecell/scqtl-mapping/cv.bed', holdout=True)
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[78]:
-  :END:
-
-  Index the phenotype file.
-
-  #+CALL: tabix(input="cv.bed") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
-
-  #+RESULTS:
-  : Submitted batch job 44403650
-
-  Run ~qtltools~.
-
-  #+CALL: qtltools(pheno="cv", geno="/scratch/midway2/aksarkar/singlecell/reproduce-yang/yri-dosages.vcf.gz", op="--window 100000 --permute 10000") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
-
-  #+RESULTS:
-  : Submitted batch job 44403660
-
-  Read the output.
-
-  #+BEGIN_SRC ipython :noweb no-export
-    <<read-qtltools-def>>
-    cv_qtls = read_qtltools_output('scqtl-mapping/cv')
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[79]:
-  :END:
-
-  Check the beta approximation to the permutation p-values.
-
-  #+BEGIN_SRC ipython :noweb no-export :ipyfile figure/qtl-mapping.org/cv-qtl-beta-approx.png
-    <<plot-approx-perm-def>>
-    plot_approx_permutation(cv_qtls)
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[80]:
-  [[file:figure/qtl-mapping.org/cv-qtl-beta-approx.png]]
-  :END:
-
-  Plot a QQ plot of the permutation p-values.
-
-  #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/cv-qtl-qq.png
-    plt.clf()
-    plt.gcf().set_size_inches(6, 6)
-    plt.scatter(-np.log10(np.arange(1, 1 + cv_qtls.shape[0]) / cv_qtls.shape[0]), -np.log10(cv_qtls['p_beta']), s=1, c='k')
-    plt.plot([0, np.log10(cv_qtls.shape[0])], [0, np.log10(cv_qtls.shape[0])], c='r', ls='--')
-    plt.xlabel('Expected $-\log_{10}(p)$')
-    _ = plt.ylabel('Observed $-\log_{10}(p)$')
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[81]:
-  [[file:figure/qtl-mapping.org/cv-qtl-qq.png]]
-  :END:
-
-  Take QTLs at FDR 10%.
-
-  #+BEGIN_SRC ipython
-    cv_qtls['fdr_pass'] = bh(cv_qtls['p_beta']) < .1
-    cv_qtls['fdr_pass'].sum()
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[84]:
-  : 42
-  :END:
-
-  #+BEGIN_SRC ipython
-    with sqlite3.connect('/project2/mstephens/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
-      X, Y = extract_qtl_gene_pair(cv_qtls[cv_qtls['fdr_pass']], var, dosages='/scratch/midway2/aksarkar/singlecell/reproduce-yang/YRI_SNPs_2_IPSC.txt.gen.gz')
-      X.reset_index().melt(id_vars='gene', var_name='ind').to_sql('cv_qtl_geno', conn, index=False, if_exists='replace')
-      conn.execute('create index ix_cv_qtl_geno on cv_qtl_geno(gene, ind);')
-      Y.reset_index().melt(id_vars='gene', var_name='ind').to_sql('var', conn, index=False, if_exists='replace')
-      conn.execute('create index ix_var on var(gene, ind);')
-      cv_qtls[['gene', 'id', 'beta', 'p_beta', 'fdr_pass']].to_sql('cv_qtls', conn, index=False, if_exists='replace')
-      conn.execute('create index ix_cv_qtls on cv_qtls(gene);')
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[85]:
-  :END:
-
-* Call Fano factor-QTLs from sample moments
-
-  #+BEGIN_SRC ipython
-    umi = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/scqtl-counts.txt.gz', index_col=0)
-    annotations = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/scqtl-annotation.txt')
-    keep_samples = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/quality-single-cells.txt', index_col=0, header=None)
-    keep_genes = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/genes-pass-filter.txt', index_col=0, header=None)
-    umi = umi.loc[keep_genes.values.ravel(),keep_samples.values.ravel()]
-    annotations = annotations.loc[keep_samples.values.ravel()]
-    keep_inds = annotations.groupby('chip_id').apply(lambda x: len(x) >= 50)
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[2]:
-  :END:
-
-  #+BEGIN_SRC ipython
-    fano = umi.groupby(annotations['chip_id'].values, axis=1).agg(lambda x: x.var(axis=1) / x.mean(axis=1)).dropna()
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[67]:
-  :END:
-
-  Normalize the variance matrix analagous to the bulk data.
-
-  #+BEGIN_SRC ipython :noweb no-export
-    <<r-wrappers>>
-    fano = var.loc[:,keep_inds].transform(lambda x: (x - x.mean()) / x.std(), axis=1).apply(qqnorm, axis=0)
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[69]:
-  :END:
-
-  Write out the [[https://qtltools.github.io/qtltools/pages/input_files.html][phenotype file]] for ~qtltools~. Hold out even chromosomes while
-  optimizing the power to detect eQTLs.
-
-  #+BEGIN_SRC ipython :noweb no-export
-    <<get-gene-info>>
-    <<write-pheno-def>>
-    write_pheno_file(fano, gene_info, '/scratch/midway2/aksarkar/singlecell/scqtl-mapping/fano.bed', holdout=True)
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[70]:
-  :END:
-
-  Index the phenotype file.
-
-  #+CALL: tabix(input="fano.bed") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
-
-  #+RESULTS:
-  : Submitted batch job 44403347
-
-  Run ~qtltools~.
-
-  #+CALL: qtltools(pheno="fano", geno="/scratch/midway2/aksarkar/singlecell/reproduce-yang/yri-dosages.vcf.gz", op="--window 100000 --permute 10000") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
-
-  #+RESULTS:
-
-  Read the output.
-
-  #+BEGIN_SRC ipython :noweb no-export
-    <<read-qtltools-def>>
-    fano_qtls = read_qtltools_output('scqtl-mapping/fano')
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[71]:
-  :END:
-
-  Check the beta approximation to the permutation p-values.
-
-  #+BEGIN_SRC ipython :noweb no-export :ipyfile figure/qtl-mapping.org/fano-qtl-beta-approx.png
-    <<plot-approx-perm-def>>
-    plot_approx_permutation(fano_qtls)
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[72]:
-  [[file:figure/qtl-mapping.org/fano-qtl-beta-approx.png]]
-  :END:
-
-  Plot a QQ plot of the permutation p-values.
-
-  #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/fano-qtl-qq.png
-    plt.clf()
-    plt.gcf().set_size_inches(6, 6)
-    plt.scatter(-np.log10(np.arange(1, 1 + fano_qtls.shape[0]) / fano_qtls.shape[0]), -np.log10(fano_qtls['p_beta']), s=1, c='k')
-    plt.plot([0, np.log10(fano_qtls.shape[0])], [0, np.log10(fano_qtls.shape[0])], c='r', ls='--')
-    plt.xlabel('Expected $-\log_{10}(p)$')
-    _ = plt.ylabel('Observed $-\log_{10}(p)$')
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[73]:
-  [[file:figure/qtl-mapping.org/fano-qtl-qq.png]]
-  :END:
-
-  Take QTLs at FDR 10%.
-
-  #+BEGIN_SRC ipython
-    fano_qtls['fdr_pass'] = bh(fano_qtls['p_beta']) < .1
-    fano_qtls['fdr_pass'].sum()
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[74]:
-  : 34
-  :END:
-
-  Write out the QTLs.
-
-  #+CALL: replication-tests-def()
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[34]:
-  :END:
-
-  #+BEGIN_SRC ipython
-    with sqlite3.connect('/project2/mstephens/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
-      X, Y = extract_qtl_gene_pair(fano_qtls[fano_qtls['fdr_pass']], fano, dosages='/scratch/midway2/aksarkar/singlecell/reproduce-yang/YRI_SNPs_2_IPSC.txt.gen.gz')
-      X.reset_index().melt(id_vars='gene', var_name='ind').to_sql('fano_qtl_geno', conn, index=False, if_exists='replace')
-      conn.execute('create index ix_fano_qtl_geno on fano_qtl_geno(gene, ind);')
-      Y.reset_index().melt(id_vars='gene', var_name='ind').to_sql('fano', conn, index=False, if_exists='replace')
-      conn.execute('create index ix_fano on fano(gene, ind);')
-      fano_qtls[['gene', 'id', 'beta', 'p_beta', 'fdr_pass']].to_sql('fano_qtls', conn, index=False, if_exists='replace')
-      conn.execute('create index ix_fano_qtls on fano_qtls(gene);')
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[75]:
-  :END:
+** Call variance-QTLs
+
+   We have \(r_{ijk} \sim g_{ijk}(\cdot)\), where \(g\) is the ZINB density [[file:zinb.org][as
+   previously defined]].
+
+   Fixing individual \(i\), gene \(k\), we can estimate a
+   zero-inflation--corrected variance as:
+
+   \[ E[r_{ijk}] = R_{ijk} \mu_{ik} \]
+
+   \[ V[r_{ijk}] = E[r_{ijk}] + \left(E[r_{ijk}]\right)^2 \phi_{ik} \]
+
+   Read the estimated corrected variances.
+
+   #+BEGIN_SRC ipython
+     with sqlite3.connect('/project2/mstephens/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
+       variance = (pd.read_sql(
+         """select gene, ind, var from params where ind in 
+         (select chip_id from annotation group by chip_id 
+         having count(distinct sample) >= 50);""", conn)
+                  .pivot(index='gene', columns='ind', values='var'))
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[2]:
+   :END:
+
+   Normalize the variance matrix.
+
+   #+BEGIN_SRC ipython
+     variance = variance.transform(lambda x: (x - x.mean()) / x.std(), axis=1).apply(qqnorm, axis=0)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[11]:
+   :END:
+
+   Write out the [[https://qtltools.github.io/qtltools/pages/input_files.html][phenotype file]] for ~qtltools~. Hold out even chromosomes while
+   optimizing the power to detect eQTLs.
+
+   #+BEGIN_SRC ipython
+     write_pheno_file(variance, gene_info, '/scratch/midway2/aksarkar/singlecell/scqtl-mapping/variance.bed', holdout=True)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[13]:
+   :END:
+
+   Index the phenotype file.
+
+   #+CALL: tabix(input="variance.bed") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
+
+   #+RESULTS:
+   : Submitted batch job 44437682
+
+   Run ~qtltools~.
+
+   #+CALL: qtltools(pheno="variance", geno="/scratch/midway2/aksarkar/singlecell/reproduce-yang/yri-dosages.vcf.gz", op="--window 100000 --permute 10000") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
+
+   #+RESULTS:
+   : Submitted batch job 44437683
+
+   Read the output.
+
+   #+BEGIN_SRC ipython
+     variance_qtls = read_qtltools_output('scqtl-mapping/variance')
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[14]:
+   :END:
+
+   Check the beta approximation to the permutation p-values.
+
+   #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/variance-qtl-beta-approx.png
+     plot_approx_permutation(variance_qtls)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[15]:
+   [[file:figure/qtl-mapping.org/variance-qtl-beta-approx.png]]
+   :END:
+
+   Plot a QQ plot of the permutation p-values.
+
+   #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/variance-qtl-qq.png
+     qqplot(variance_qtls)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[16]:
+   [[file:figure/qtl-mapping.org/variance-qtl-qq.png]]
+   :END:
+
+   Take QTLs at FDR 10%.
+
+   #+BEGIN_SRC ipython
+     variance_qtls['fdr_pass'] = bh(variance_qtls['p_beta']) < .1
+     variance_qtls['fdr_pass'].sum()
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[17]:
+   : 51
+   :END:
+
+** Call CV-QTLs
+
+   Estimate the coefficient of variation using the corrected moments.
+
+   #+BEGIN_SRC ipython
+     with sqlite3.connect('/project2/mstephens/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
+       params = (pd.read_sql(
+         """select gene, ind, mean, var from params where ind in 
+         (select chip_id from annotation group by chip_id 
+         having count(distinct sample) >= 50);""", conn))
+       params['cv'] = np.sqrt(params['var']) / (params['mean'] + 1e-8)
+       cv = params.pivot(index='gene', columns='ind', values='cv')
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[24]:
+   :END:
+
+   Normalize the CV matrix.
+
+   #+BEGIN_SRC ipython
+     cv = cv.transform(lambda x: (x - x.mean()) / x.std(), axis=1).apply(qqnorm, axis=0)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[25]:
+   :END:
+
+   Write out the [[https://qtltools.github.io/qtltools/pages/input_files.html][phenotype file]] for ~qtltools~. Hold out even chromosomes while
+   optimizing the power to detect eQTLs.
+
+   #+BEGIN_SRC ipython
+     write_pheno_file(cv, gene_info, '/scratch/midway2/aksarkar/singlecell/scqtl-mapping/cv.bed', holdout=True)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[26]:
+   :END:
+
+   Index the phenotype file.
+
+   #+CALL: tabix(input="cv.bed") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
+
+   #+RESULTS:
+   : Submitted batch job 44437790
+
+   Run ~qtltools~.
+
+   #+CALL: qtltools(pheno="cv", geno="/scratch/midway2/aksarkar/singlecell/reproduce-yang/yri-dosages.vcf.gz", op="--window 100000 --permute 10000") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
+
+   #+RESULTS:
+   : Submitted batch job 44437791
+
+   Read the output.
+
+   #+BEGIN_SRC ipython
+     cv_qtls = read_qtltools_output('scqtl-mapping/cv')
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[27]:
+   :END:
+
+   Check the beta approximation to the permutation p-values.
+
+   #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/cv-qtl-beta-approx.png
+     plot_approx_permutation(cv_qtls)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[28]:
+   [[file:figure/qtl-mapping.org/cv-qtl-beta-approx.png]]
+   :END:
+
+   Plot a QQ plot of the permutation p-values.
+
+   #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/cv-qtl-qq.png
+     qqplot(cv_qtls)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[29]:
+   [[file:figure/qtl-mapping.org/cv-qtl-qq.png]]
+   :END:
+
+   Take QTLs at FDR 10%.
+
+   #+BEGIN_SRC ipython
+     cv_qtls['fdr_pass'] = bh(cv_qtls['p_beta']) < .1
+     cv_qtls['fdr_pass'].sum()
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[30]:
+   : 0
+   :END:
+
+** Call Fano-QTLs
+
+   Estimate the coefficient of variation using the corrected moments.
+
+   #+BEGIN_SRC ipython
+     with sqlite3.connect('/project2/mstephens/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
+       params = (pd.read_sql(
+         """select gene, ind, mean, var from params where ind in 
+         (select chip_id from annotation group by chip_id 
+         having count(distinct sample) >= 50);""", conn))
+       params['fano'] = params['var'] / (params['mean'] + 1e-8)
+       fano = params.pivot(index='gene', columns='ind', values='fano')
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[31]:
+   :END:
+
+   Normalize the FANO matrix.
+
+   #+BEGIN_SRC ipython
+     fano = fano.transform(lambda x: (x - x.mean()) / x.std(), axis=1).apply(qqnorm, axis=0)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[32]:
+   :END:
+
+   Write out the [[https://qtltools.github.io/qtltools/pages/input_files.html][phenotype file]] for ~qtltools~. Hold out even chromosomes while
+   optimizing the power to detect eQTLs.
+
+   #+BEGIN_SRC ipython
+     write_pheno_file(fano, gene_info, '/scratch/midway2/aksarkar/singlecell/scqtl-mapping/fano.bed', holdout=True)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[33]:
+   :END:
+
+   Index the phenotype file.
+
+   #+CALL: tabix(input="fano.bed") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
+
+   #+RESULTS:
+   : Submitted batch job 44437897
+
+   Run ~qtltools~.
+
+   #+CALL: qtltools(pheno="fano", geno="/scratch/midway2/aksarkar/singlecell/reproduce-yang/yri-dosages.vcf.gz", op="--window 100000 --permute 10000") :dir /scratch/midway2/aksarkar/singlecell/scqtl-mapping
+
+   #+RESULTS:
+   : Submitted batch job 44437898
+
+   Read the output.
+
+   #+BEGIN_SRC ipython
+     fano_qtls = read_qtltools_output('scqtl-mapping/fano')
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[34]:
+   :END:
+
+   Check the beta approximation to the permutation p-values.
+
+   #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/fano-qtl-beta-approx.png
+     plot_approx_permutation(fano_qtls)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[35]:
+   [[file:figure/qtl-mapping.org/fano-qtl-beta-approx.png]]
+   :END:
+
+   Plot a QQ plot of the permutation p-values.
+
+   #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/fano-qtl-qq.png
+     qqplot(fano_qtls)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[36]:
+   [[file:figure/qtl-mapping.org/fano-qtl-qq.png]]
+   :END:
+
+   Take QTLs at FDR 10%.
+
+   #+BEGIN_SRC ipython
+     fano_qtls['fdr_pass'] = bh(fano_qtls['p_beta']) < .1
+     fano_qtls['fdr_pass'].sum()
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[37]:
+   : 8
+   :END:

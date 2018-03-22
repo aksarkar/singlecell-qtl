@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- 2018-03-19 Mon 14:54 -->
+<!-- 2018-03-22 Thu 13:47 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mean/dispersion estimation</title>
@@ -702,11 +702,23 @@ Process each chunk in parallel.
 <div class="org-src-container">
 <pre class="src src-ipython" id="orgbd92003"><span class="org-keyword">def</span> <span class="org-function-name">fit_gene</span>(chunk):
   <span class="org-variable-name">res0</span> = so.minimize(nb, x0=[0, 0], args=(chunk[:,0], chunk[:,1]))
-  <span class="org-variable-name">pi0</span> = (chunk[:,0] == 0).<span class="org-builtin">sum</span>() / chunk.shape[0] + 1e-8
+  <span class="org-variable-name">pi0</span> = (chunk[:,0] == 0).<span class="org-builtin">sum</span>() / chunk.shape[0]
   <span class="org-variable-name">res</span> = so.minimize(zinb, x0=<span class="org-builtin">list</span>(res0.x) + [sp.logit(pi0 + 1e-8)], args=(chunk[:,0], chunk[:,1]))
   <span class="org-comment-delimiter"># </span><span class="org-comment">Log likelihood of ZINB vs. NB. We need to flip signs again</span>
   <span class="org-variable-name">llr</span> = chunk.shape[0] * (res0.fun - res.fun)
-  <span class="org-keyword">return</span> <span class="org-builtin">list</span>(res0.x) + [res0.success] + <span class="org-builtin">list</span>(res.x) + [res.success, llr]
+  <span class="org-keyword">if</span> llr &lt; 1:
+    <span class="org-comment-delimiter"># </span><span class="org-comment">This isn't a likelihood ratio test. Numerically, our implementation of</span>
+    <span class="org-comment-delimiter"># </span><span class="org-comment">ZINB can't represent pi = 0, so we need to use a separate implementation</span>
+    <span class="org-comment-delimiter"># </span><span class="org-comment">for it</span>
+    <span class="org-variable-name">log_mu</span>, <span class="org-variable-name">neg_log_phi</span> = res0.x
+    <span class="org-variable-name">logit_pi</span> = -np.inf
+  <span class="org-keyword">else</span>:
+    <span class="org-variable-name">log_mu</span>, <span class="org-variable-name">neg_log_phi</span>, <span class="org-variable-name">logit_pi</span> = res.x
+  <span class="org-variable-name">mean_by_sample</span> = chunk[:,1].ravel() * np.exp(log_mu)
+  <span class="org-variable-name">var_by_sample</span> = mean_by_sample + np.square(mean_by_sample) * np.exp(-neg_log_phi)
+  <span class="org-variable-name">mean_by_ind</span> = mean_by_sample.mean()
+  <span class="org-variable-name">var_by_ind</span> = (np.square(mean_by_sample - mean_by_ind) + var_by_sample).mean()
+  <span class="org-keyword">return</span> [log_mu, -neg_log_phi, logit_pi, mean_by_ind, var_by_ind]
 
 <span class="org-keyword">def</span> <span class="org-function-name">compute_breaks</span>(chunk, by_ind=<span class="org-constant">False</span>):
   <span class="org-comment-delimiter"># </span><span class="org-comment">Each subproblem has fixed size, so we can just split on integer indices</span>
@@ -764,7 +776,7 @@ Populate the database.
   conn.execute(<span class="org-string">'drop table if exists params;'</span>)
   <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-builtin">range</span>(20):
     <span class="org-keyword">for</span> chunk <span class="org-keyword">in</span> pd.read_table(<span class="org-string">'/scratch/midway2/aksarkar/singlecell/density-estimation/result-{}.txt.gz'</span>.<span class="org-builtin">format</span>(i), sep=<span class="org-string">' '</span>, header=<span class="org-constant">None</span>, chunksize=1000):
-      <span class="org-variable-name">chunk.columns</span> = [<span class="org-string">'gene'</span>, <span class="org-string">'ind'</span>, <span class="org-string">'nb_log_mean'</span>, <span class="org-string">'nb_log_disp'</span>, <span class="org-string">'nb_success'</span>, <span class="org-string">'zinb2_log_mean'</span>, <span class="org-string">'zinb2_log_disp'</span>, <span class="org-string">'zinb2_logodds'</span>, <span class="org-string">'zinb_success'</span>, <span class="org-string">'llr'</span>]
+      <span class="org-variable-name">chunk.columns</span> = [<span class="org-string">'gene'</span>, <span class="org-string">'ind'</span>, <span class="org-string">'log_mu'</span>, <span class="org-string">'log_phi'</span>, <span class="org-string">'logodds'</span>, <span class="org-string">'mean'</span>, <span class="org-string">'var'</span>]
       chunk.to_sql(name=<span class="org-string">'params'</span>, con=conn, index=<span class="org-constant">False</span>, if_exists=<span class="org-string">'append'</span>)
   conn.execute(<span class="org-string">'create index ix_params on params(gene, ind);'</span>)
 </pre>
@@ -915,7 +927,7 @@ Write out the computed dispersions.
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: Abhishek Sarkar</p>
-<p class="date">Created: 2018-03-19 Mon 14:54</p>
+<p class="date">Created: 2018-03-22 Thu 13:47</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>

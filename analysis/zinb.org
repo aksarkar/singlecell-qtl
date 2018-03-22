@@ -580,18 +580,19 @@
 
    Populate the database.
 
-   #+BEGIN_SRC ipython :async t
+   #+BEGIN_SRC ipython
      with sqlite3.connect('/project2/mstephens/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
        conn.execute('drop table if exists params;')
        for i in range(20):
          for chunk in pd.read_table('/scratch/midway2/aksarkar/singlecell/density-estimation/result-{}.txt.gz'.format(i), sep=' ', header=None, chunksize=1000):
-           chunk.columns = ['gene', 'ind', 'log_mean', 'log_disp', 'logodds', 'mean', 'var']
+           chunk.columns = ['gene', 'ind', 'log_mu', 'log_phi', 'logodds', 'mean', 'var']
            chunk.to_sql(name='params', con=conn, index=False, if_exists='append')
        conn.execute('create index ix_params on params(gene, ind);')
    #+END_SRC
 
    #+RESULTS:
    :RESULTS:
+   # Out[24]:
    :END:
 
 * Genome-wide distribution of dispersion
