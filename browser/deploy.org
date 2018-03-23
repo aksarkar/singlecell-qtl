@@ -1,0 +1,56 @@
+#+TITLE: Deploy scQTL browser
+#+AUTHOR: Abhishek Sarkar
+
+Start a remote session on ~shiny.stephenslab.uchicago.edu~.
+
+#+BEGIN_SRC sh :session shiny
+  ssh shiny
+#+END_SRC
+
+The version of ~vagrant~ on ~shiny.stephenslab.uchicago.edu~ is old, and
+appears to use a broken URL to download Vagrant boxes. Add the Debian Stretch
+box using the full URL.
+
+#+BEGIN_SRC sh :session shiny
+  vagrant box add "https://app.vagrantup.com/debian/boxes/stretch64"
+#+END_SRC
+
+Initialize the VM.
+
+#+BEGIN_SRC sh :session shiny
+  mkdir scqtl-browser
+  cd scqtl-browser
+  vagrant up
+  vagrant provision
+  vagrant ssh
+#+END_SRC
+
+Install ~miniconda3~ as user ~vagrant~.
+
+#+BEGIN_SRC sh :session shiny
+  wget -q https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh
+  bash Miniconda3-latest-Linux-x86_64.sh -p
+  echo "export PATH=$PATH:$HOME/miniconda3/bin" >>$HOME/.bashrc
+  . $HOME/.bashrc
+#+END_SRC
+
+Initialize a new environment. We don't need the full environment from
+~singlecell-qtl~.
+
+#+BEGIN_SRC sh :session shiny
+  conda env create -n "scqtl-browser" numpy scipy pandas matplotlib bokeh
+  source activate scqtl-browser
+#+END_SRC
+
+~rsync~ the code and data to the server
+
+#+BEGIN_SRC sh :dir 
+  rsync -au /project2/mstephens/aksarkar/projects/singlecell-qtl/browser/ shiny:scqtl-browser/
+#+END_SRC
+
+Start the QTL browser. The code/data are available under ~/vagrant~ inside the VM.
+
+#+BEGIN_SRC sh :session shiny
+  cd /vagrant
+  bokeh serve --port 80
+#+END_SRC
