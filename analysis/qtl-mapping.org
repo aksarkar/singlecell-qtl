@@ -27,7 +27,7 @@
   #+CALL: ipython3(memory="4G", venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 44665837
+  : Submitted batch job 44679332
 
   #+BEGIN_SRC ipython
     %matplotlib inline
@@ -235,17 +235,24 @@
   #+NAME: qqplot-def
   #+BEGIN_SRC ipython
     def qqplot(qtls):
+      N = qtls.shape[0]
+      # 95% bootstrap CI
+      ci = -np.log10(np.percentile(np.sort(np.random.uniform(size=(100, N)), axis=1), [5, 95], axis=0))
+
+      grid = -np.log10(np.arange(1, 1 + N) / N)
       plt.clf()
       plt.gcf().set_size_inches(6, 6)
-      plt.scatter(-np.log10(np.arange(1, 1 + qtls.shape[0]) / qtls.shape[0]), -np.log10(qtls['p_adjust']), s=1, c='k')
+      plt.scatter(grid, -np.log10(qtls['p_beta']), s=1, c='k')
       plt.plot([0, np.log10(qtls.shape[0])], [0, np.log10(qtls.shape[0])], c='r', ls='--')
+      plt.plot(grid, ci[0], c='r', ls=':')
+      plt.plot(grid, ci[1], c='r', ls=':')
       plt.xlabel('Expected $-\log_{10}(p)$')
       _ = plt.ylabel('Observed $-\log_{10}(p)$')
   #+END_SRC
 
   #+RESULTS: qqplot-def
   :RESULTS:
-  # Out[7]:
+  # Out[18]:
   :END:
 
   #+NAME: replication-tests-def
@@ -361,11 +368,11 @@
 
    #+NAME: geuvadis-qc
    #+BEGIN_SRC sh :eval never-export :dir /scratch/midway2/aksarkar/singlecell/geuvadis
-    sbatch --partition=broadwl --mem=2G --wait
-    #!/bin/bash
-    plink --memory 2000 --geno 0.01 --maf 0.05 --keep-fam /scratch/midway2/aksarkar/singlecell/geuvadisgeuvadis-subset.txt --vcf /project/compbio/geuvadis/genotypes/GEUVADIS.chr1.PH1PH2_465.IMPFRQFILT_BIALLELIC_PH.annotv2.genotypes.vcf.gz --recode vcf-iid --out geuvadis-chr1
-    bgzip -f geuvadis-chr1.vcf
-    tabix -f -p vcf geuvadis-chr1.vcf.gz
+     sbatch --partition=broadwl --mem=2G --wait
+     #!/bin/bash
+     plink --memory 2000 --geno 0.01 --maf 0.05 --keep-fam /scratch/midway2/aksarkar/singlecell/geuvadis-subset.txt --vcf /project/compbio/geuvadis/genotypes/GEUVADIS.chr1.PH1PH2_465.IMPFRQFILT_BIALLELIC_PH.annotv2.genotypes.vcf.gz --recode vcf-iid --out geuvadis-chr1
+     bgzip -f geuvadis-chr1.vcf
+     tabix -f -p vcf geuvadis-chr1.vcf.gz
    #+END_SRC
 
    #+RESULTS: geuvadis-qc
@@ -375,6 +382,9 @@
 
    #+CALL: qtltools() :dir /scratch/midway2/aksarkar/singlecell/geuvadis
 
+   #+RESULTS:
+   : Submitted batch job 44685856
+
    Read the results.
 
    #+BEGIN_SRC ipython
@@ -383,7 +393,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[40]:
+   # Out[23]:
    :END:
 
    Check the beta approximation to the permutation p-values.
@@ -396,6 +406,18 @@
    :RESULTS:
    # Out[41]:
    [[file:figure/qtl-mapping.org/geuvadis-beta-approx.png]]
+   :END:
+
+   Plot the QQ plot
+
+   #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/geuvadis-qq.png
+     qqplot(geuvadis_qtls)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[24]:
+   [[file:figure/qtl-mapping.org/geuvadis-qq.png]]
    :END:
 
    Repeat the analysis after subsetting to 54 individuals.
@@ -519,32 +541,50 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[32]:
+   # Out[133]:
    :END:
 
    Compare ~qtltools~ to ~fastqtl~. The input files need to be modified.
 
    #+BEGIN_SRC sh :dir /scratch/midway2/aksarkar/singlecell/reproduce-yang/
-     sbatch --partition=broadwl
+     sbatch --partition=broadwl --wait
      #!/bin/bash
      zcat fastqtl_qqnorm_RNAseq_run.fixed.txt.gz | awk -vOFS='\t' 'NR == 1 {$4 = "pid" OFS "gid" OFS "strand"; for (i = 5; i <= NF; i++) {$i = "NA"$i} print} NR > 1 {$4 = $4 OFS $4 OFS "+"; $3 = $2; print}' >test.bed
      awk 'NR == 1 {for (i = 2; i <= NF; i++) {$i = "NA"$i}} {print}' fasteqtl_PC_RNAseq_run.fixed.txt >covars.txt
    #+END_SRC
 
    #+RESULTS:
-   : Submitted batch job 44599774
+   : Submitted batch job 44683583
 
-   Fix the TSS.
-
+   Check whether the FDR is properly controlled by permuting.
+   
    #+BEGIN_SRC ipython
-     bulk_expr = pd.read_table('/scratch/midway2/aksarkar/singlecell/reproduce-yang/test.bed', index_col=3)
-     bulk_expr.index = [x.split('.')[0] for x in bulk_expr.index]
-     write_pheno_file(bulk_expr.iloc[:,3:], gene_info, '/scratch/midway2/aksarkar/singlecell/reproduce-yang/test.bed', holdout=False)
+     np.random.seed(0)
+     permutation = bulk_expr.columns.values.copy()
+     np.random.shuffle(permutation[5:])
+     bulk_expr.columns = permutation
+
+     covars = (pd.read_table('/scratch/midway2/aksarkar/singlecell/reproduce-yang/covars.txt', sep=' ')
+               .rename(columns={k: v for k, v in zip(bulk_expr.columns, permutation)}))
+     covars.to_csv('/scratch/midway2/aksarkar/singlecell/reproduce-yang/covars.txt', sep=' ', index=False)
    #+END_SRC
 
    #+RESULTS:
    :RESULTS:
-   # Out[25]:
+   # Out[121]:
+   :END:
+
+   Fix the TSS by rewriting the phenotype file.
+
+   #+BEGIN_SRC ipython
+     bulk_expr = pd.read_table('/scratch/midway2/aksarkar/singlecell/reproduce-yang/test.bed', index_col=3)
+     bulk_expr.index = [x.split('.')[0] for x in bulk_expr.index]
+     write_pheno_file(bulk_expr.iloc[:,5:], gene_info, '/scratch/midway2/aksarkar/singlecell/reproduce-yang/test.bed', holdout=False)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[127]:
    :END:
 
    Index the phenotype file.
@@ -552,14 +592,14 @@
    #+CALL: tabix(input="test.bed") :dir /scratch/midway2/aksarkar/singlecell/reproduce-yang/
 
    #+RESULTS:
-   : Submitted batch job 44600471
+   : Submitted batch job 44683584
 
    Run ~qtltools~.
 
    #+CALL: qtltools(pheno="test", geno="/scratch/midway2/aksarkar/singlecell/reproduce-yang/yri-dosages.vcf.gz", op="--cov covars.txt --window 100000 --permute 10000") :dir /scratch/midway2/aksarkar/singlecell/reproduce-yang/
 
    #+RESULTS:
-   : Submitted batch job 44600579
+   : Submitted batch job 44683586
 
    Read ~qtltools output~
 
@@ -569,7 +609,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[26]:
+   # Out[130]:
    :END:
 
    Check the beta approximation.
@@ -580,7 +620,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[33]:
+   # Out[134]:
    [[file:figure/qtl-mapping.org/qqnorm-beta-approx.png]]
    :END:
 
@@ -592,7 +632,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[34]:
+   # Out[135]:
    [[file:figure/qtl-mapping.org/qqnorm-qq.png]]
    :END:
 
@@ -604,7 +644,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[35]:
+   # Out[136]:
    : 1441
    :END:
 
@@ -613,14 +653,14 @@
    Read the counts matrix.
 
    #+BEGIN_SRC ipython
-    bulk_counts = (pd.read_table('/project2/gilad/singlecell-qtl/bulk/counts_RNAseq_iPSC.txt', sep=' ', index_col=0)
-                   .rename(columns=lambda x: 'NA{}'.format(x))
-                   .rename(index=lambda x: x.split('.')[0]))
+     bulk_counts = (pd.read_table('/project2/gilad/singlecell-qtl/bulk/counts_RNAseq_iPSC.txt', sep=' ', index_col=0)
+                    .rename(columns=lambda x: 'NA{}'.format(x))
+                    .rename(index=lambda x: x.split('.')[0]))
    #+END_SRC
 
    #+RESULTS:
    :RESULTS:
-   # Out[36]:
+   # Out[34]:
    :END:
 
    Throw out individuals.
@@ -635,7 +675,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[37]:
+   # Out[35]:
    :END:
 
    Normalize the counts matrix by computing log CPM. Normalizing by length is
@@ -643,9 +683,42 @@
    individuals.
 
    #+BEGIN_SRC ipython
-    bulk_log_cpm = (cpm(bulk_counts)
-                    .transform(lambda x: (x - x.mean()) / x.std(), axis=1)
-                    .apply(qqnorm, axis=0))
+     bulk_log_cpm = (cpm(bulk_counts)
+                     .transform(lambda x: (x - x.mean()) / x.std(), axis=1)
+                     .apply(qqnorm, axis=0))
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[36]:
+   :END:
+
+   Compute expression PCs.
+
+   #+BEGIN_SRC ipython
+     covars = pd.DataFrame(skd.PCA(n_components=10).fit(bulk_log_cpm).components_, columns=bulk_log_cpm.columns)
+     covars.index.name = 'id'
+     covars.to_csv('/scratch/midway2/aksarkar/singlecell/recall-bulk/log-cpm-covars.txt', sep='\t')
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[37]:
+   :END:
+
+   Check whether the false discovery rate is properly controlled by permuting
+   the data.
+
+   Write the phenotype matrix in ~qtltools~ format.  Use the annotation data
+   (ENSEMBL 75) in this repository to be consistent with the single cell
+   data. *Important: this loses 1716 genes (are they pseudogenes?)*
+
+   #+BEGIN_SRC ipython
+     write_pheno_file(
+       bulk_log_cpm,
+       gene_info,
+       holdout=False,
+       output_file='/scratch/midway2/aksarkar/singlecell/recall-bulk/bulk-log-cpm.bed')
    #+END_SRC
 
    #+RESULTS:
@@ -653,50 +726,20 @@
    # Out[38]:
    :END:
 
-   Compute expression PCs.
-
-   #+BEGIN_SRC ipython
-    covars = pd.DataFrame(skd.PCA(n_components=10).fit(bulk_log_cpm).components_, columns=bulk_log_cpm.columns)
-    covars.index.name = 'id'
-    covars.to_csv('/scratch/midway2/aksarkar/singlecell/recall-bulk/covars.txt', sep='\t')
-   #+END_SRC
-
-   #+RESULTS:
-   :RESULTS:
-   # Out[39]:
-   :END:
-
-   Write the phenotype matrix in ~qtltools~ format.  Use the annotation data
-   (ENSEMBL 75) in this repository to be consistent with the single cell
-   data. *Important: this loses 1716 genes (are they pseudogenes?)*
-
-   #+BEGIN_SRC ipython
-    write_pheno_file(
-      bulk_log_cpm,
-      gene_info,
-      holdout=False,
-      output_file='/scratch/midway2/aksarkar/singlecell/recall-bulk/bulk.bed')
-   #+END_SRC
-
-   #+RESULTS:
-   :RESULTS:
-   # Out[40]:
-   :END:
-
    Index the phenotype file.
 
-   #+CALL: tabix(input="bulk.bed") :dir /scratch/midway2/aksarkar/singlecell/recall-bulk
+   #+CALL: tabix(input="bulk-log-cpm.bed") :dir /scratch/midway2/aksarkar/singlecell/recall-bulk
 
    #+RESULTS:
-   : Submitted batch job 44601491
+   : Submitted batch job 44681764
 
    Ensure the dosage file follows the VCF standard. Add the prefix ~NA~ to sample IDs.
 
    #+BEGIN_SRC sh :dir /scratch/midway2/aksarkar/singlecell/reproduce-yang
-    sbatch --partition=broadwl
-    #!/bin/bash
-    zcat YRI_SNPs_2_IPSC.txt.gen.gz | awk -vOFS='\t' 'BEGIN {print "##fileformat=VCFv4.2"; print "##FORMAT=<ID=DS,Number=1,Type=Float>"} NR == 1 {for (i = 10; i <= NF; i++) {$i = "NA"$i}} {print}' | bgzip >yri-dosages.vcf.gz
-    tabix yri-dosages.vcf.gz
+     sbatch --partition=broadwl
+     #!/bin/bash
+     zcat YRI_SNPs_2_IPSC.txt.gen.gz | awk -vOFS='\t' 'BEGIN {print "##fileformat=VCFv4.2"; print "##FORMAT=<ID=DS,Number=1,Type=Float>"} NR == 1 {for (i = 10; i <= NF; i++) {$i = "NA"$i}} {print}' | bgzip >yri-dosages.vcf.gz
+     tabix yri-dosages.vcf.gz
    #+END_SRC
 
    #+RESULTS:
@@ -704,57 +747,57 @@
 
    Run ~qtltools~
 
-   #+CALL: qtltools(pheno="bulk", geno="/scratch/midway2/aksarkar/singlecell/reproduce-yang/yri-dosages.vcf.gz", op="--cov covars.txt  --window 100000 --permute 10000") :dir /scratch/midway2/aksarkar/singlecell/recall-bulk
+   #+CALL: qtltools(pheno="bulk-log-cpm", geno="/scratch/midway2/aksarkar/singlecell/reproduce-yang/yri-dosages.vcf.gz", op="--cov log-cpm-covars.txt --window 100000 --permute 10000") :dir /scratch/midway2/aksarkar/singlecell/recall-bulk
 
    #+RESULTS:
-   : Submitted batch job 44601509
+   : Submitted batch job 44681768
 
    Read the output. *Important: this loses 201 genes (is this a bug in
    ~qtltools~)?*
 
    #+BEGIN_SRC ipython
-     bulk_qtls = read_qtltools_output('recall-bulk/bulk')
+     bulk_cpm_qtls = read_qtltools_output('recall-bulk/bulk-log-cpm')
    #+END_SRC
 
    #+RESULTS:
    :RESULTS:
-   # Out[41]:
+   # Out[137]:
    :END:
 
    Check the beta approximation.
 
    #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/bulk-cpm-beta-approx.png
-     plot_approx_permutation(bulk_qtls)
+     plot_approx_permutation(bulk_cpm_qtls)
    #+END_SRC
 
    #+RESULTS:
    :RESULTS:
-   # Out[42]:
+   # Out[40]:
    [[file:figure/qtl-mapping.org/bulk-cpm-beta-approx.png]]
    :END:
 
    Plot a QQ plot of adjusted p-values.
 
    #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/bulk-cpm-qq.png
-     qqplot(bulk_qtls)
+     qqplot(bulk_cpm_qtls)
    #+END_SRC
 
    #+RESULTS:
    :RESULTS:
-   # Out[43]:
+   # Out[138]:
    [[file:figure/qtl-mapping.org/bulk-cpm-qq.png]]
    :END:
 
    Take QTLs with \(\mathrm{FDR} < 0.1\).
 
    #+BEGIN_SRC ipython
-     bulk_qtls['fdr_pass'].sum()
+     bulk_cpm_qtls['fdr_pass'].sum()
    #+END_SRC
 
    #+RESULTS:
    :RESULTS:
-   # Out[44]:
-   : 1269
+   # Out[139]:
+   : 1276
    :END:
 
 ** Recall bulk eQTLs from log TPM
@@ -775,7 +818,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[107]:
+   # Out[140]:
    :END:
 
    To quantify how much power we expect to lose going from 58 to 49 individuals
@@ -783,14 +826,28 @@
    individuals.
 
    #+BEGIN_SRC ipython
-    np.random.seed(0)
-    keep_inds = np.random.choice(bulk_log_tpm.columns, size=49, replace=False)
-    bulk_log_tpm = bulk_log_tpm.filter(items=keep_inds, axis='columns')
+     np.random.seed(0)
+     keep_inds = np.random.choice(bulk_log_tpm.columns, size=49, replace=False)
+     bulk_log_tpm = bulk_log_tpm.filter(items=keep_inds, axis='columns')
    #+END_SRC
 
    #+RESULTS:
    :RESULTS:
    # Out[37]:
+   :END:
+
+   Check whether the false discovery rate is properly controlled by permuting
+   the data.
+
+   #+BEGIN_SRC ipython
+     np.random.seed(0)
+     permutation = bulk_log_tpm.columns.values
+     np.random.shuffle(permutation)
+   #+END_SRC
+
+   #+RESULTS:
+   :RESULTS:
+   # Out[67]:
    :END:
 
    Get the TSS information. Use the annotation data (ENSEMBL 75) in this
@@ -800,91 +857,91 @@
    genes*
 
    #+BEGIN_SRC ipython
-    write_pheno_file(
-      bulk_log_tpm,
-      gene_info,
-      holdout=False,
-      output_file='/scratch/midway2/aksarkar/singlecell/recall-bulk/bulk.bed')
+     write_pheno_file(
+       bulk_log_tpm,
+       gene_info,
+       holdout=False,
+       output_file='/scratch/midway2/aksarkar/singlecell/recall-bulk/bulk-log-tpm.bed')
    #+END_SRC
 
    #+RESULTS:
    :RESULTS:
-   # Out[66]:
+   # Out[141]:
    :END:
 
    Index the phenotype file.
 
-   #+CALL: tabix(input="bulk.bed") :dir /scratch/midway2/aksarkar/singlecell/recall-bulk
+   #+CALL: tabix(input="bulk-log-tpm.bed") :dir /scratch/midway2/aksarkar/singlecell/recall-bulk
 
    #+RESULTS:
-   : Submitted batch job 44548093
+   : Submitted batch job 44686635
 
    Compute principal components.
 
    #+BEGIN_SRC ipython
     covars = pd.DataFrame(skd.PCA(n_components=6).fit(bulk_log_tpm).components_, columns=bulk_log_tpm.columns)
     covars.index.name = 'id'
-    covars.to_csv('/scratch/midway2/aksarkar/singlecell/recall-bulk/covars.txt', sep='\t')
+    covars.to_csv('/scratch/midway2/aksarkar/singlecell/recall-bulk/log-tpm-covars.txt', sep='\t')
    #+END_SRC
 
    #+RESULTS:
    :RESULTS:
-   # Out[73]:
+   # Out[142]:
    :END:
 
    Run ~qtltools~
 
-   #+CALL: qtltools(pheno="bulk", geno="/scratch/midway2/aksarkar/singlecell/reproduce-yang/yri-dosages.vcf.gz", op="--window 100000 --permute 10000") :dir /scratch/midway2/aksarkar/singlecell/recall-bulk
+   #+CALL: qtltools(pheno="bulk-log-tpm", geno="/scratch/midway2/aksarkar/singlecell/reproduce-yang/yri-dosages.vcf.gz", op="--cov log-tpm-covars.txt --window 100000 --permute 10000") :dir /scratch/midway2/aksarkar/singlecell/recall-bulk
 
    #+RESULTS:
-   : Submitted batch job 44548801
+   : Submitted batch job 44686640
 
    Read the output. *Important: this loses 201 genes (is this a bug in
    ~qtltools~)?*
 
    #+BEGIN_SRC ipython
-    bulk_qtls = read_qtltools_output('recall-bulk/bulk')
+     bulk_tpm_qtls = read_qtltools_output('recall-bulk/bulk-log-tpm')
    #+END_SRC
 
    #+RESULTS:
    :RESULTS:
-   # Out[109]:
+   # Out[143]:
    :END:
 
    Check the beta approximation to the permuted p-values.
 
    #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/bulk-tpm-beta-approx.png
-     plot_approx_permutation(bulk_qtls)
+     plot_approx_permutation(bulk_tpm_qtls)
    #+END_SRC
 
    #+RESULTS:
    :RESULTS:
-   # Out[75]:
+   # Out[144]:
    [[file:figure/qtl-mapping.org/bulk-tpm-beta-approx.png]]
    :END:
 
    Plot a QQ plot of the adjusted p-values.
 
    #+BEGIN_SRC ipython :ipyfile figure/qtl-mapping.org/bulk-log-tpm-qtl-qq.png
-     qqplot(bulk_qtls)
+     qqplot(bulk_tpm_qtls)
    #+END_SRC
 
    #+RESULTS:
    :RESULTS:
-   # Out[76]:
+   # Out[145]:
    [[file:figure/qtl-mapping.org/bulk-log-tpm-qtl-qq.png]]
    :END:
 
    Take QTLs with \(\mathrm{FDR} < 0.1\).
 
    #+BEGIN_SRC ipython
-    bulk_qtls['fdr_pass'].sum()
+     bulk_tpm_qtls['fdr_pass'].sum()
    #+END_SRC
 
    #+RESULTS:
    :RESULTS:
-   # Out[77]:
-   : 1019
+   # Out[146]:
+   : 1020
    :END:
 
 * Analysis using sample moments
@@ -995,7 +1052,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[12]:
+   # Out[147]:
    :END:
 
    Check the beta approximation.
@@ -1018,7 +1075,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[14]:
+   # Out[148]:
    [[file:figure/qtl-mapping.org/pooled-qtl-qq.png]]
    :END:
 
@@ -1030,7 +1087,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[15]:
+   # Out[149]:
    : 124
    :END:
 
@@ -1139,7 +1196,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[19]:
+   # Out[150]:
    :END:
 
    Check the beta approximation to the permutation p-values.
@@ -1162,7 +1219,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[21]:
+   # Out[151]:
    [[file:figure/qtl-mapping.org/sample-mean-qtl-qq.png]]
    :END:
 
@@ -1174,7 +1231,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[22]:
+   # Out[152]:
    : 127
    :END:
 
@@ -1279,7 +1336,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[43]:
+   # Out[153]:
    :END:
 
    Check the beta approximation to the permutation p-values.
@@ -1302,7 +1359,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[45]:
+   # Out[154]:
    [[file:figure/qtl-mapping.org/sample-var-qtl-qq.png]]
    :END:
 
@@ -1314,7 +1371,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[46]:
+   # Out[155]:
    : 41
    :END:
 
@@ -1395,7 +1452,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[50]:
+   # Out[156]:
    :END:
 
    Check the beta approximation to the permutation p-values.
@@ -1418,7 +1475,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[52]:
+   # Out[157]:
    [[file:figure/qtl-mapping.org/sample-cv-qtl-qq.png]]
    :END:
 
@@ -1430,7 +1487,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[53]:
+   # Out[158]:
    : 0
    :END:
 
@@ -1537,7 +1594,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[58]:
+   # Out[159]:
    :END:
 
    Check the beta approximation to the permutation p-values.
@@ -1560,7 +1617,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[60]:
+   # Out[160]:
    [[file:figure/qtl-mapping.org/sample-fano-qtl-qq.png]]
    :END:
 
@@ -1572,7 +1629,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[61]:
+   # Out[161]:
    : 5
    :END:
 
@@ -1654,7 +1711,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[66]:
+   # Out[162]:
    :END:
 
    Check the beta approximation to the permutation p-values.
@@ -1677,7 +1734,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[68]:
+   # Out[163]:
    [[file:figure/qtl-mapping.org/mu-qtl-qq.png]]
    :END:
 
@@ -1689,7 +1746,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[69]:
+   # Out[164]:
    : 128
    :END:
 
@@ -1755,7 +1812,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[73]:
+   # Out[165]:
    :END:
 
    Check the beta approximation to the permutation p-values.
@@ -1778,7 +1835,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[75]:
+   # Out[166]:
    [[file:figure/qtl-mapping.org/phi-qtl-qq.png]]
    :END:
 
@@ -1790,7 +1847,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[76]:
+   # Out[167]:
    : 0
    :END:
 
@@ -1878,7 +1935,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[81]:
+   # Out[168]:
    :END:
 
    Check the beta approximation to the permutation p-values.
@@ -1901,7 +1958,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[83]:
+   # Out[169]:
    [[file:figure/qtl-mapping.org/mean-qtl-qq.png]]
    :END:
 
@@ -1913,7 +1970,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[84]:
+   # Out[170]:
    : 124
    :END:
 
@@ -1990,7 +2047,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[88]:
+   # Out[171]:
    :END:
 
    Check the beta approximation to the permutation p-values.
@@ -2013,7 +2070,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[90]:
+   # Out[172]:
    [[file:figure/qtl-mapping.org/variance-qtl-qq.png]]
    :END:
 
@@ -2025,7 +2082,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[91]:
+   # Out[173]:
    : 56
    :END:
 
@@ -2093,7 +2150,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[95]:
+   # Out[174]:
    :END:
 
    Check the beta approximation to the permutation p-values.
@@ -2116,7 +2173,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[97]:
+   # Out[175]:
    [[file:figure/qtl-mapping.org/cv-qtl-qq.png]]
    :END:
 
@@ -2128,7 +2185,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[98]:
+   # Out[176]:
    : 0
    :END:
 
@@ -2196,7 +2253,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[102]:
+   # Out[177]:
    :END:
 
    Check the beta approximation to the permutation p-values.
@@ -2219,7 +2276,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[104]:
+   # Out[178]:
    [[file:figure/qtl-mapping.org/fano-qtl-qq.png]]
    :END:
 
@@ -2231,7 +2288,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[105]:
+   # Out[179]:
    : 9
    :END:
 
