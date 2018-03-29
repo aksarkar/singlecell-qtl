@@ -19,7 +19,7 @@
   #+CALL: ipython3(memory="16G", venv="scqtl")
 
   #+RESULTS:
-  : Submitted batch job 44375305
+  : Submitted batch job 44628582
 
   #+BEGIN_SRC ipython
     import colorcet
@@ -55,7 +55,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[2]:
+  # Out[50]:
   :END:
 
   Our preliminary investigation into concordance between single cell log CPM
@@ -99,8 +99,10 @@
       plt.ylabel(ylabel)
       plt.savefig(filename)
 
-    def cpm(counts, log2=False):
-      cpm = counts / counts.sum(axis=0) * 1e6
+    def cpm(counts, size=None, log2=False):
+      if size is None:
+        size = counts.sum(axis=0)
+      cpm = counts / size * 1e6
       if log2:
         cpm = np.log(cpm + 1) / np.log(2)
       return cpm
@@ -108,7 +110,7 @@
 
   #+RESULTS: concordance-def
   :RESULTS:
-  # Out[4]:
+  # Out[36]:
   :END:
 
   #+RESULTS:
@@ -120,7 +122,8 @@
   #+BEGIN_SRC ipython
     def plot_concordance_by_individual(umi, annotations, bulk, output_dir):
       bulk, pooled_cpm = bulk.align(
-        cpm(umi.groupby(by=annotations['chip_id'].values, axis=1).agg(np.sum), log2=True),
+        cpm(umi.groupby(by=annotations['chip_id'].values, axis=1).agg(np.sum),
+            size=annotations.groupby('chip_id')['mol_hs'].agg(np.sum), log2=True),
         axis=1, join='inner')
       for k in bulk:
         plot_concordance(
@@ -132,7 +135,7 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[5]:
+  # Out[52]:
   :END:
 
   #+BEGIN_SRC ipython :exports code :results none
@@ -160,7 +163,8 @@
   Regress log CPM on log TPM per individual.
 
   #+BEGIN_SRC ipython
-    log_cpm = cpm(umi.groupby(by=annotations['chip_id'].values, axis=1).agg(np.sum), log2=True)
+    log_cpm = cpm(umi.groupby(by=annotations['chip_id'].values, axis=1).agg(np.sum),
+                  size=annotations.groupby('chip_id')['mol_hs'].agg(np.sum), log2=True)
 
     models = []
     for k in log_cpm:
@@ -182,60 +186,60 @@
 
   #+RESULTS:
   :RESULTS:
-  # Out[21]:
+  # Out[55]:
   #+BEGIN_EXAMPLE
     coef_  intercept_     score
     ind
-    NA19209  0.759377    1.660926  0.709362
-    NA18870  0.750696    1.732782  0.703104
-    NA19101  0.759685    1.690175  0.697954
-    NA18511  0.740117    1.809700  0.693680
-    NA18912  0.718535    2.001607  0.692959
-    NA18520  0.760444    1.613778  0.685874
-    NA18502  0.738130    1.711769  0.682607
-    NA19116  0.742643    1.755796  0.681918
-    NA19127  0.741644    1.769711  0.680303
-    NA19225  0.706966    2.106424  0.679880
-    NA18856  0.764916    1.597887  0.679598
-    NA18862  0.722867    1.891478  0.679059
-    NA18858  0.754711    1.666457  0.678761
-    NA18505  0.714221    1.917385  0.677579
-    NA19190  0.740495    1.720444  0.677577
-    NA19128  0.743995    1.737283  0.674081
-    NA18859  0.728045    1.872289  0.673909
-    NA19210  0.733700    1.742506  0.673691
-    NA18489  0.728046    1.895054  0.672914
-    NA19204  0.743995    1.750568  0.672341
-    NA19160  0.743820    1.685838  0.671657
-    NA18852  0.754111    1.635548  0.671283
-    NA18853  0.707881    1.977697  0.670091
-    NA19207  0.752425    1.584909  0.670047
-    NA18501  0.714753    1.969962  0.664866
-    NA19102  0.750077    1.671346  0.664716
-    NA19257  0.695525    2.084460  0.664515
-    NA19140  0.711993    1.965617  0.664095
-    NA19143  0.740653    1.705506  0.661908
-    NA19153  0.738036    1.698136  0.661239
-    NA19152  0.723241    1.868916  0.659311
-    NA19099  0.748797    1.693588  0.658244
-    NA19108  0.720094    1.902579  0.652776
-    NA18913  0.742618    1.725264  0.652254
-    NA19093  0.752946    1.654357  0.651548
-    NA18517  0.700715    2.053029  0.648788
-    NA18519  0.747064    1.626929  0.648665
-    NA19114  0.699838    2.076215  0.644568
-    NA19206  0.728429    1.821610  0.643768
-    NA19130  0.729332    1.796103  0.640484
-    NA19193  0.731584    1.774047  0.640351
-    NA18855  0.735860    1.819777  0.640328
-    NA19098  0.725242    1.901097  0.639892
-    NA18907  0.743605    1.680004  0.637896
-    NA18522  0.715081    1.923653  0.632872
-    NA18508  0.687100    2.124206  0.631827
-    NA19144  0.689462    2.124030  0.629938
-    NA18507  0.665595    2.426414  0.629691
-    NA19159  0.746806    1.680142  0.623998
-    NA18498  0.728503    1.748663  0.618822
+    NA19209  0.732135    0.621440  0.708942
+    NA18870  0.723933    0.639626  0.702726
+    NA19101  0.729250    0.821881  0.694528
+    NA18511  0.707770    0.595565  0.693847
+    NA18912  0.688394    0.829654  0.692485
+    NA18520  0.731075    0.540232  0.685123
+    NA18502  0.712065    0.709610  0.681293
+    NA19127  0.713962    0.681134  0.680976
+    NA18856  0.734898    0.524328  0.680601
+    NA19225  0.679871    0.987852  0.680592
+    NA19116  0.713121    0.788535  0.679035
+    NA18505  0.684536    0.776815  0.677933
+    NA18862  0.696277    0.826739  0.677919
+    NA19190  0.712649    0.631736  0.677498
+    NA18859  0.701953    0.727513  0.677474
+    NA18858  0.725889    0.689016  0.674898
+    NA19204  0.713031    0.618002  0.673072
+    NA19128  0.713168    0.659729  0.672981
+    NA19210  0.705317    0.620322  0.671795
+    NA18852  0.725955    0.547926  0.671536
+    NA18489  0.698290    0.886555  0.670849
+    NA19160  0.717357    0.639725  0.670532
+    NA18853  0.679031    0.844840  0.668854
+    NA19207  0.724029    0.594377  0.667087
+    NA19102  0.720588    0.552334  0.665105
+    NA18501  0.686617    0.784491  0.664648
+    NA19140  0.685028    0.794710  0.664363
+    NA19257  0.668304    0.932599  0.664279
+    NA19143  0.711429    0.596842  0.661830
+    NA19152  0.696553    0.801533  0.659410
+    NA19099  0.721284    0.652934  0.658266
+    NA19153  0.708352    0.790061  0.657488
+    NA19108  0.691788    0.722956  0.654361
+    NA18913  0.713234    0.619717  0.652851
+    NA18517  0.671620    0.830685  0.649466
+    NA19093  0.720266    0.673872  0.646884
+    NA18519  0.715715    0.727332  0.645861
+    NA19206  0.701227    0.721929  0.644383
+    NA19114  0.671593    1.001002  0.643536
+    NA18855  0.708293    0.735871  0.642197
+    NA19130  0.699075    0.643755  0.641843
+    NA19098  0.696567    0.798366  0.641485
+    NA19193  0.704863    0.794734  0.640733
+    NA18907  0.715533    0.630487  0.639015
+    NA18508  0.659032    0.924178  0.631646
+    NA18522  0.686510    0.881811  0.631580
+    NA19144  0.663290    1.017565  0.631238
+    NA18507  0.641305    1.306322  0.630363
+    NA19159  0.712498    0.504794  0.628940
+    NA18498  0.695710    0.710972  0.624978
   #+END_EXAMPLE
   :END:
 
@@ -318,3 +322,68 @@
   file:figure/sc-vs-bulk.org/subsets/NA18507-10.svg
   file:figure/sc-vs-bulk.org/subsets/NA18507-50.svg
   file:figure/sc-vs-bulk.org/subsets/NA18507-100.svg
+
+* Plot bulk vs. single cell relative abundance
+
+  TPM is proportional to relative abundance.
+
+  #+BEGIN_SRC ipython
+    bulk_tpm = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/kallisto/bulk-ipsc-tpm.txt.gz', header=None, sep=' ')
+    bulk_rho = bulk_tpm.pivot(columns=0, index=1, values=2)
+    bulk_rho.index = [x.split('.')[0] for x in bulk_rho.index]
+    bulk_rho = bulk_rho.filter(items=keep_genes.index, axis='index')
+    bulk_log_rho = np.ma.masked_invalid(np.log(bulk_rho.values)) - np.log(bulk_rho.values.sum(axis=0))
+    bulk_log_rho = pd.DataFrame(bulk_log_rho, index=bulk_rho.index, columns=bulk_rho.columns)
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[72]:
+  :END:
+
+  Under [[file:zinb.org][our assumed model]], the parameter \(\mu\) is relative abundance.
+
+  #+BEGIN_SRC ipython
+    import sqlite3
+
+    with sqlite3.connect('/project2/mstephens/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
+      log_mu = (pd.read_sql(
+        """select gene, ind, log_mu from params where ind in 
+        (select chip_id from annotation group by chip_id 
+        having count(distinct sample) >= 50);""", conn)
+                  .pivot(index='gene', columns='ind', values='log_mu'))
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[58]:
+  :END:
+
+  #+BEGIN_SRC ipython
+    def plot_concordance_rho(bulk, sc, output_dir):
+      bulk, sc = bulk.align(sc, axis=1, join='inner')
+      for k in bulk:
+        plot_concordance(
+          x=sc[k].to_frame(),
+          y=bulk[k].to_frame(),
+          title=k,
+          xlabel='Single cell log relative abundance',
+          ylabel='Bulk log relative abundance',
+          filename='{}/{}.svg'.format(output_dir, k))
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  # Out[73]:
+  :END:
+
+  #+BEGIN_SRC ipython :results none
+    plot_concordance_rho(
+      bulk_log_rho,
+      log_mu,
+      '/project2/mstephens/aksarkar/projects/singlecell-qtl/analysis/figure/sc-vs-bulk.org/vs-sc-mean')
+  #+END_SRC
+
+  file:figure/sc-vs-bulk.org/vs-sc-mean/NA18501.svg
+  file:figure/sc-vs-bulk.org/vs-sc-mean/NA18502.svg
+  file:figure/sc-vs-bulk.org/vs-sc-mean/NA18505.svg
