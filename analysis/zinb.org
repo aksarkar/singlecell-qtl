@@ -74,7 +74,7 @@
 
   #+RESULTS: zinb-imports
   :RESULTS:
-  # Out[1]:
+  # Out[29]:
   :END:
 
   #+BEGIN_SRC ipython
@@ -118,7 +118,7 @@
   #+END_EXAMPLE
   :END:
 
-* Tensorflow implementation
+* Tensorflow implementation                                        :noexport:
 
   We optimize all of the parameters together, using one-hot encoding to map
   parameters to data points. This makes inference more amenable to running on
@@ -429,35 +429,6 @@
    # Out[4]:
    :END:
 
-   Write the data to the database. Use the pass through the count matrix to
-   compute and write out size factors for each cell.
-
-   #+BEGIN_SRC ipython :async t
-     annotations = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/scqtl-annotation.txt')
-     keep_genes = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/genes-pass-filter.txt', index_col=0, header=None)
-     keep_samples = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/quality-single-cells.txt', index_col=0, header=None)
-     annotations = annotations.loc[keep_samples.values.ravel()]
-     annotations['sample'] = annotation.apply(lambda x: '{chip_id}.{experiment:08d}.{well}'.format(**dict(x)), axis=1)
-     annotations = annotations.set_index('sample')
-     annotations['size'] = np.zeros(annotations.shape[0])
-     with sqlite3.connect('/project2/mstephens/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
-       conn.execute('drop table if exists umi;')
-       for chunk in pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/scqtl-counts.txt.gz', index_col=0, chunksize=100):
-         chunk = (chunk
-                  .filter(items=keep_genes[keep_genes.values.ravel()].index, axis='index')
-                  .loc[:,keep_samples.values.ravel()])
-         if not chunk.empty:
-           annotations['size'] += chunk.sum(axis=0)
-           chunk.reset_index().melt(id_vars='gene', var_name='sample').to_sql(name='umi', con=conn, index=False, if_exists='append')
-       annotations[['chip_id', 'size']].to_sql(name='annotation', con=conn, if_exists='replace')
-       conn.execute('create index ix_umi on umi(gene, sample);')
-   #+END_SRC
-
-   #+RESULTS:
-   :RESULTS:
-   # Out[99]:
-   :END:
-
    Use this to check the parameter estimation for a particular gene/individual.
 
    #+BEGIN_SRC ipython
@@ -474,37 +445,46 @@
    # Out[7]:
    :END:
 
-   Shard the data to parallelize over nodes. Doing this in one pass over the
-   count matrix is easier than doing this in one pass over the database table
-   because we don't have to worry about accidentally splitting up data for an
-   individual/gene pair across chunks.
+   Shard the data to parallelize over nodes. During this pass, write the data
+   out to the database. *Important: we need to use the actual number of
+   molecules detected rather than the sum of QC'ed counts as the size factor.*
 
-   #+BEGIN_SRC ipython :async t
+   #+BEGIN_SRC ipython
+     annotations = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/scqtl-annotation.txt')
+     annotations['sample'] = annotations.apply(lambda x: '{chip_id}.{experiment:08d}.{well}'.format(**dict(x)), axis=1)
+     annotations['size'] = annotations['mol_hs']
+     annotations = annotations[['sample', 'chip_id', 'size']]
      with sqlite3.connect('/project2/mstephens/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
-       annotation = pd.read_sql('select * from annotation', con=conn)
+       annotations.to_sql(name='annotation', con=conn, if_exists='replace')
+       conn.execute('create index ix_annotation on annotation(chip_id, sample);')
 
      keep_samples = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/quality-single-cells.txt', index_col=0, header=None)
      keep_genes = pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/genes-pass-filter.txt', index_col=0, header=None)
      keep_genes = keep_genes[keep_genes.values].index
+
      i = 0
-     for chunk in pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/scqtl-counts.txt.gz', index_col=0, chunksize=1000):
-       print('Processing chunk {}'.format(i))
-       chunk = (chunk
-                .loc[:,keep_samples.values.ravel()]
-                .filter(items=keep_genes, axis='index'))
-       if not chunk.empty:
+     with sqlite3.connect('/project2/mstephens/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
+       conn.execute('drop table if exists umi;')
+       for chunk in pd.read_table('/project2/mstephens/aksarkar/projects/singlecell-qtl/data/scqtl-counts.txt.gz', index_col=0, chunksize=1000):
+         print('Processing chunk {}'.format(i))
          chunk = (chunk
-                  .reset_index()
-                  .melt(id_vars='gene', var_name='sample')
-                  .merge(annotation[['chip_id', 'sample', 'size']], on='sample')
-                  .sort_values(['gene', 'chip_id', 'sample']))
-         chunk.to_csv('/scratch/midway2/aksarkar/singlecell/density-estimation/chunk-{}.txt.gz'.format(i), columns=['gene', 'chip_id', 'sample', 'value', 'size'], compression='gzip', sep='\t')
-         i += 1
+                  .loc[:,keep_samples.values.ravel()]
+                  .filter(items=keep_genes, axis='index'))
+         if not chunk.empty:
+           chunk = (chunk
+                    .reset_index()
+                    .melt(id_vars='gene', var_name='sample')
+                    .merge(annotations, on='sample')
+                    .sort_values(['gene', 'chip_id', 'sample']))
+           chunk.to_csv('/scratch/midway2/aksarkar/singlecell/density-estimation/chunk-{}.txt.gz'.format(i), columns=['gene', 'chip_id', 'sample', 'value', 'size'], compression='gzip', sep='\t')
+           chunk[['gene', 'sample', 'value']].to_sql(name='umi', con=conn, index=False, if_exists='append')
+           i += 1
+       conn.execute('create index ix_umi on umi(gene, sample);')
    #+END_SRC
 
    #+RESULTS:
    :RESULTS:
-   # Out[105]:
+   # Out[35]:
    :END:
 
    Process each chunk in parallel.
@@ -576,7 +556,7 @@
    #+END_SRC
 
    #+RESULTS:
-   : Submitted batch job 44420462
+   : Submitted batch job 44633431
 
    Populate the database.
 
@@ -592,7 +572,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[24]:
+   # Out[56]:
    :END:
 
 * Genome-wide distribution of dispersion
