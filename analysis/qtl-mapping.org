@@ -27,7 +27,7 @@
   #+CALL: ipython3(memory="4G", venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 44679332
+  : Submitted batch job 44700742
 
   #+BEGIN_SRC ipython
     %matplotlib inline
@@ -252,7 +252,7 @@
 
   #+RESULTS: qqplot-def
   :RESULTS:
-  # Out[18]:
+  # Out[7]:
   :END:
 
   #+NAME: replication-tests-def
@@ -2205,7 +2205,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[99]:
+   # Out[14]:
    :END:
 
    Normalize the Fano matrix.
@@ -2253,7 +2253,7 @@
 
    #+RESULTS:
    :RESULTS:
-   # Out[177]:
+   # Out[10]:
    :END:
 
    Check the beta approximation to the permutation p-values.
@@ -2385,24 +2385,17 @@
 
   #+BEGIN_SRC ipython
     with sqlite3.connect('/project2/mstephens/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
-      bulk = pd.read_table('/scratch/midway2/aksarkar/singlecell/reproduce-yang/fastqtl_qqnorm_RNAseq_run.fixed.txt.gz', index_col=3)
-      (bulk.iloc[:,3:]
-       .rename(index=lambda x: x.split('.')[0], columns=lambda x: 'NA{}'.format(x))
-       .reset_index()
-       .rename(columns={'ID': 'gene'})
-       .melt(id_vars='gene', var_name='ind')
-       .to_sql('bulk', conn, index=False, if_exists='replace'))
-      X, Y = extract_qtl_gene_pair(var_qtls[var_qtls['fdr_pass']], var, dosages='/scratch/midway2/aksarkar/singlecell/reproduce-yang/YRI_SNPs_2_IPSC.txt.gen.gz')
-      X.reset_index().melt(id_vars='gene', var_name='ind').to_sql('var_qtl_geno', conn, index=False, if_exists='replace')
-      conn.execute('create index ix_var_qtl_geno on var_qtl_geno(gene, ind);')
-      Y.reset_index().melt(id_vars='gene', var_name='ind').to_sql('var', conn, index=False, if_exists='replace')
-      conn.execute('create index ix_var on var(gene, ind);')
-      var_qtls[['gene', 'id', 'beta', 'p_beta', 'fdr_pass']].to_sql('var_qtls', conn, index=False, if_exists='replace')
-      conn.execute('create index ix_var_qtls on var_qtls(gene);')
+      fano_qtls[['gene', 'id', 'beta', 'p_beta', 'fdr_pass']].to_sql('fano_qtls', conn, index=False, if_exists='replace')
+      conn.execute('create index ix_fano_qtls on fano_qtls(gene);')
+      X, Y = extract_qtl_gene_pair(fano_qtls[fano_qtls['fdr_pass']], fano, dosages='/scratch/midway2/aksarkar/singlecell/reproduce-yang/YRI_SNPs_2_IPSC.txt.gen.gz')
+      X.reset_index().melt(id_vars='gene', var_name='ind').to_sql('fano_qtl_geno', conn, index=False, if_exists='replace')
+      conn.execute('create index ix_fano_qtl_geno on fano_qtl_geno(gene, ind);')
+      Y.reset_index().melt(id_vars='gene', var_name='ind').to_sql('fano', conn, index=False, if_exists='replace')
+      conn.execute('create index ix_fano on fano(gene, ind);')
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[51]:
+  # Out[15]:
   :END:
 
