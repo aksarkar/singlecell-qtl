@@ -47,10 +47,9 @@ def update_umi(attr, old, new):
         umi.sample == annotation.sample""",
         con=conn,
         params=(gene, ind,))
-      keep = umi['value'] < 19
-      edges = np.arange(20)
-      counts, _ = np.histogram(umi['value'].values, bins=edges)
-      umi_data.data = bokeh.models.ColumnDataSource.from_df(pd.DataFrame({'left': edges[:-1], 'right': edges[1:], 'count': counts}))
+      grid = np.arange(max(umi['value'].values))
+      counts, _ = np.histogram(umi['value'].values, bins=grid)
+      umi_data.data = bokeh.models.ColumnDataSource.from_df(pd.DataFrame({'left': grid[:-1], 'right': grid[1:], 'count': counts}))
 
       params = pd.read_sql('select log_mu, log_phi, logodds from params where gene == ? and ind == ?', con=conn, params=(gene, ind))
       n = np.exp(-params['log_phi'])
@@ -59,7 +58,6 @@ def update_umi(attr, old, new):
       assert (p >= 0).all(), 'p must be non-negative'
       assert (p <= 1).all(), 'p must be <= 1'
       G = st.nbinom(n=n.values.ravel(), p=p.ravel()).pmf
-      grid = np.arange(19)
       pmf = np.array([G(x).mean() for x in grid])
       if np.isfinite(params.iloc[0]['logodds']):
         pmf *= sp.expit(-params['logodds']).values
