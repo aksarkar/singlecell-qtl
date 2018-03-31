@@ -25,13 +25,15 @@ def update_gene(attr, old, new):
     global gene
     gene = next(conn.execute('select gene from fano_qtls where fano_qtls.gene == ?;', (gene_data.data['gene'][selected[0]],)))[0]
     print('Selected {}'.format(gene))
-    ind_data.data = bokeh.models.ColumnDataSource.from_df(pd.read_sql(
+    params = pd.read_sql(
       sql="""select fano_qtl_geno.ind, fano_qtl_geno.value as genotype, log_mu,
       log_phi, logodds, mean, var, var / mean as fano from
       fano_qtl_geno, params where fano_qtl_geno.gene == ? and
       fano_qtl_geno.gene == params.gene and fano_qtl_geno.ind == params.ind;""",
       params=(gene,),
-      con=conn))
+      con=conn)
+    params['cv'] = np.sqrt(params['var']) / params['mean']
+    ind_data.data = bokeh.models.ColumnDataSource.from_df(params)
     umi_data.data = bokeh.models.ColumnDataSource.from_df(pd.DataFrame(columns=['left', 'right', 'count']))
     dist_data.data = bokeh.models.ColumnDataSource.from_df(pd.DataFrame(columns=['x', 'y']))
 
@@ -77,7 +79,7 @@ def init():
 
 # These need to be separate because they have different dimension
 ind_data = bokeh.models.ColumnDataSource(pd.DataFrame(
-  columns=['ind', 'genotype', 'log_mu', 'log_phi', 'logodds', 'mean', 'var', 'fano']))
+  columns=['ind', 'genotype', 'log_mu', 'log_phi', 'logodds', 'mean', 'var', 'cv', 'fano']))
 ind_data.on_change('selected', update_umi)
 
 gene_data = bokeh.models.ColumnDataSource(pd.DataFrame(columns=['gene', 'id', 'p', 'beta']))
@@ -120,6 +122,11 @@ sc_var_by_geno.scatter(source=ind_data, x='genotype', y='var', color='black', si
 sc_var_by_geno.xaxis.axis_label = 'Dosage'
 sc_var_by_geno.yaxis.axis_label = 'ZI-corrected variance'
 
+sc_cv_by_geno = bokeh.plotting.figure(width=300, height=300, tools=['tap', hover])
+sc_cv_by_geno.scatter(source=ind_data, x='genotype', y='cv', color='black', size=8)
+sc_cv_by_geno.xaxis.axis_label = 'Dosage'
+sc_cv_by_geno.yaxis.axis_label = 'ZI-corrected CV'
+
 sc_fano_by_geno = bokeh.plotting.figure(width=300, height=300, tools=['tap', hover])
 sc_fano_by_geno.scatter(source=ind_data, x='genotype', y='fano', color='black', size=8)
 sc_fano_by_geno.xaxis.axis_label = 'Dosage'
@@ -133,7 +140,7 @@ umi.yaxis.axis_label = 'Number of cells'
 
 layout = bokeh.layouts.layout(
   [[qtls],
-   [sc_mean_by_geno, sc_var_by_geno, sc_fano_by_geno],
+   [sc_mean_by_geno, sc_var_by_geno, sc_cv_by_geno, sc_fano_by_geno],
    [sc_mu_by_geno, sc_phi_by_geno, sc_logodds_by_geno, umi]],
   sizing_mode='fixed')
 

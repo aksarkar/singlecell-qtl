@@ -1,6 +1,6 @@
 #+TITLE: Deploy scQTL browser
 #+AUTHOR: Abhishek Sarkar
-#+PROPERTY: header-args:shell+ :eval never-export :results output drawer
+#+PROPERTY: header-args:shell :eval never-export :results output
 
 Start a remote session on ~shiny.stephenslab.uchicago.edu~.
 
@@ -19,7 +19,7 @@ Start a remote session on ~shiny.stephenslab.uchicago.edu~.
 |         |                |                          |          |          |            |                  |         |                |
 |         |                |                          |          |          |            |                  |         |                |
 | ***     | System         | restart                  | required | ***      |            |                  |         |                |
-| Last    | login:         | Fri                      | Mar      | 30       |   16:28:39 |             2018 | from    | 205.208.52.220 |
+| Last    | login:         | Sat                      | Mar      | 31       |   12:39:24 |             2018 | from    | 128.135.112.68 |
 
 The version of ~vagrant~ on ~shiny.stephenslab.uchicago.edu~ is old, and
 appears to use a broken URL to download Vagrant boxes. Add the Debian Stretch
@@ -65,7 +65,7 @@ individual files in /usr/share/doc/*/copyright.
 
 Debian GNU/Linux comes with ABSOLUTELY NO WARRANTY, to the extent
 permitted by applicable law.
-Last login: Fri Mar 30 21:28:54 2018 from 10.0.2.2
+Last login: Fri Mar 30 21:30:31 2018 from 10.0.2.2
 #+end_example
 
 The data are available on the VM under ~/vagrant~. Fake the location of the
@@ -90,19 +90,18 @@ Initialize a new environment. We don't need the full environment from
 
 #+BEGIN_SRC sh :session shiny
   conda env create -n "scqtl-browser" numpy scipy pandas matplotlib bokeh
-  source activate scqtl-browser
 #+END_SRC
 
 ~rsync~ the code and data to the server.
 
-#+BEGIN_SRC sh
+#+BEGIN_SRC sh :dir /scratch/midway2/aksarkar/singlecell
   sbatch --partition=broadwl
   #!/bin/bash
   rsync -au /project2/mstephens/aksarkar/projects/singlecell-qtl/browser/ shiny:scqtl-browser/
 #+END_SRC
 
 #+RESULTS:
-: Submitted batch job 44693435
+: Submitted batch job 44717291
 
 Start the QTL browser. The code/data are available under ~/vagrant~ inside the VM.
 
@@ -115,8 +114,10 @@ Start the QTL browser. The code/data are available under ~/vagrant~ inside the V
 #+END_SRC
 
 #+RESULTS:
-|                 |                           |           |         |           |        |    |             |
-| (scqtl-browser) | vagrant@stretch:/vagrant$ | [1]       | 699     |           |        |    |             |
-| logout          |                           |           |         |           |        |    |             |
-| nohup:          | ignoring                  | input     | and     | appending | output | to | 'nohup.out' |
-| Connection      | to                        | 127.0.0.1 | closed. |           |        |    |             |
+|                 |                           |                                |         |           |        |    |             |
+| (scqtl-browser) | vagrant@stretch:/vagrant$ | [1]                            | 550     |           |        |    |             |
+| logout          |                           |                                |         |           |        |    |             |
+| nohup:          | ignoring                  | input                          | and     | appending | output | to | 'nohup.out' |
+| Connection      | to                        | 127.0.0.1                      | closed. |           |        |    |             |
+| logout          |                           |                                |         |           |        |    |             |
+| Connection      | to                        | shiny.stephenslab.uchicago.edu | closed. |           |        |    |             |
