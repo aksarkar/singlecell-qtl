@@ -61,7 +61,7 @@
   #+CALL: ipython3(memory="4G",venv="scqtl") :dir /scratch/midway2/aksarkar/singlecell
 
   #+RESULTS:
-  : Submitted batch job 44420634
+  : Submitted batch job 44724977
 
   #+NAME: zinb-imports
   #+BEGIN_SRC ipython
@@ -74,7 +74,7 @@
 
   #+RESULTS: zinb-imports
   :RESULTS:
-  # Out[29]:
+  # Out[1]:
   :END:
 
   #+BEGIN_SRC ipython
@@ -575,7 +575,7 @@
    # Out[56]:
    :END:
 
-* Genome-wide distribution of dispersion
+* Per-gene dispersion
 
   The index of dispersion for observed data \(r_{ijk}\) at gene \(k\) is:
 
@@ -591,91 +591,28 @@
 
   Fixing gene \(k\), the mixture density has expectation:
 
-  \[ \mu_k = \frac{1}{N} \sum_{ijk} E_{g_{ijk}}[r_{ijk}] \]
+  \[ \mu_k = \frac{1}{N} \sum E[r_{ijk}] \]
 
   and variance ([[http://www.springer.com/us/book/9780387329093][Frühwirth-Schnatter 2006]]):
 
-  \[ \sigma^2_k = \frac{1}{N} \sum (E_{g_{ijk}}[r_{ijk}] - \mu)^2 + V_{g_{ijk}}
-  [r_{ijk}] \]
+  \[ \sigma^2_k = \frac{1}{N} \sum (E[r_{ijk}] - \mu)^2 + V[r_{ijk}] \]
 
   Fixing individual \(i\) and cell \(j\), we have:
 
-  \[ E[r_{ijk}] = (1 - \pi_{ik}) R_{ij} \mu_{ik} \]
+  \[ E[r_{ijk}] = R_{ij} \mu_{ik} \]
 
-  \[ V[r_[ijk]] = (1 - \pi_{ik}) \left(R_{ij} \mu_{ik} + (R_{ij} \mu_{ik})^2 \phi_{ik}\right) \]
+  \[ V[r_[ijk]] = \left(R_{ij} \mu_{ik} + (R_{ij} \mu_{ik})^2 \phi_{ik}\right) \]
 
-  Read the estimated parameters, throwing out individuals with fewer than 50
-  cells.
-
-  Compute the index of dispersion as described above. Use the sharded results
-  to parallelize. *Important: we parameterized in terms of inverse dispersion,
-  so we need to flip signs here.*
-
-  #+BEGIN_SRC ipython :eval never
-  #+END_SRC
-
-   #+BEGIN_SRC ipython :tangle /scratch/midway2/aksarkar/singlecell/np-disp.py :noweb tangle
-     <<zinb-imports>>
-     import multiprocessing as mp
-     import sqlite3
-
-     def process_gene(chunk):
-       global annotation
-       gene, ind, *_ = chunk.iloc[0]
-       if ind in annotation['chip_id']:
-         exp_value = annotation[annotation['chip_id'] == ind]['size'] * np.exp(chunk['log_mean'])
-         var = exp_value + exp_value * exp_value * np.exp(-g['log_disp'])
-         gene_mean = exp_value.mean()
-         gene_var = (np.square(exp_value - gene_mean) + var).mean()
-         return
-       else:
-         return {}
-
-     with mp.Pool() as pool:
-       with sqlite3.connect('/project2/mstephens/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
-         annotation = pd.read_sql('select * from annotation group by chip_id having count(distinct sample) >= 50;', conn)
-       chunk = pd.read_table('/scratch/midway2/aksarkar/singlecell/density-estimation/result-{}.txt.gz'.format(os.getenv('SLURM_ARRAY_TASK_ID')), header=None)
-       chunk.columns = ['gene', 'ind', 'nb_log_mean', 'nb_log_disp', 'nb_success', 'zinb2_log_mean', 'zinb2_log_disp', 'zinb2_logodds', 'zinb2_success', 'llr']
-       chunk['log_mean'] = np.where(chunk['llr'] < 1, chunk['nb_log_mean'], chunk['zinb2_log_mean'])
-       chunk['log_disp'] = np.where(chunk['llr'] < 1, chunk['nb_log_disp'], chunk['zinb2_log_disp'])
-       # Subproblems have fixed size
-       num_genes = len(set(chunk['gene']))
-       num_inds = len(set(chunk['chip_id']))
-       # Get the right endpoints (exclusive)
-       breaks = num_inds * np.arange(1, num_genes + 1)
-       res = pd.DataFrame.from_dict(pool.map(process_gene, np.split(chunk[['gene', 'ind', 'log_mean', 'log_disp']].values, breaks[:-1])))
-       res.to_csv('/scratch/midway2/aksarkar/singlecell/density-estimation/dispersion-index-{}.txt.gz'.format(os.getenv('SLURM_ARRAY_TASK_ID')), compression='gzip', sep='\t')
-   #+END_SRC
-
-   #+BEGIN_SRC sh :dir /scratch/midway2/aksarkar/singlecell/density-estimation
-     sbatch --partition=broadwl --job-name="np-zinb" --mem=4G -a 0-20 -n1 -c28 --exclusive
-     #!/bin/bash
-     source activate scqtl
-     python /scratch/midway2/aksarkar/singlecell/np-zinb.py
-   #+END_SRC
-
-  Plot the distribution of dispersions.
-
-  #+BEGIN_SRC ipython :ipyfile figure/zinb.org/global-dispersion-hist.png
-    plt.clf()
-    plt.hist(dispersion[np.isfinite(dispersion)], bins=50, color='k')
-    plt.xlabel('Index of dispersion')
-    _ = plt.ylabel('Number of genes')
-  #+END_SRC
-
-  #+RESULTS:
-  :RESULTS:
-  # Out[6]:
-  [[file:figure/zinb.org/global-dispersion-hist.png]]
-  :END:
-
-  Write out the computed dispersions.
+  Here, we ignore the factor of \((1 - \pi_{ik})\) under the assumption that
+  excess zeros do not reflect biology.
 
   #+BEGIN_SRC ipython
-    dispersion[np.isfinite(dispersion)].to_frame().to_csv('/scratch/midway2/aksarkar/singlecell/index-dispersion-by-gene.txt.gz', compression='gzip', header=False, sep='\t')
+    with sqlite3.connect('/project2/mstephens/aksarkar/projects/singlecell-qtl/browser/browser.db') as conn:
+      params = pd.read_sql('select * from params;', conn)
+    gene_params = params.groupby('gene').apply(lambda x: pd.Series([x['mean'].mean(), (np.square(x['mean'] - x['mean'].mean()) + x['var']).mean()]))
   #+END_SRC
 
   #+RESULTS:
   :RESULTS:
-  # Out[7]:
+  # Out[2]:
   :END:
